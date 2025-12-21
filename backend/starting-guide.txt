@@ -1,0 +1,36 @@
+.
+
+🔥 Correct way to start everything with Docker only
+
+If you want Docker to run both API + Redis:
+
+docker compose -f docker/docker-composer.yml up -d
+
+
+This starts:
+
+redis container
+
+api container
+→ which automatically runs npm run dev because of:
+
+command: npm run dev
+
+✋ Correct way to STOP everything
+
+To stop both api and redis (because they run in Docker):
+
+✔ Stop (but don’t remove) containers
+docker compose -f docker/docker-composer.yml stop
+
+✔ Stop & remove containers (recommended)
+docker compose -f docker/docker-composer.yml down
+
+✔ Full kill if something is stuck
+docker compose -f docker/docker-composer.yml kill
+
+🧹 Verify all containers are stopped
+docker ps
+
+
+If it shows no containers, everything is dead — no more Gemini logs.

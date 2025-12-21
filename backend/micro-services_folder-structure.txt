@@ -1,0 +1,147 @@
+codesentinel/
+├── apps/
+│   ├── api/                              # Main API Gateway (Fastify)
+│   │   ├── src/
+│   │   │   ├── modules/
+│   │   │   │   ├── auth/                 # Authentication
+│   │   │   │   ├── repositories/         # Repo management
+│   │   │   │   ├── scans/                # Scan orchestration
+│   │   │   │   ├── vulnerabilities/      # Findings API
+│   │   │   │   ├── integrations/         # Git providers
+│   │   │   │   └── reports/              # Export/reporting
+│   │   │   ├── plugins/
+│   │   │   │   ├── supabase.ts
+│   │   │   │   ├── auth.ts
+│   │   │   │   └── rate-limit.ts
+│   │   │   ├── middleware/
+│   │   │   │   ├── authenticate.ts
+│   │   │   │   └── validate-plan.ts
+│   │   │   ├── types/
+│   │   │   ├── server.ts
+│   │   │   └── env.ts
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   │
+│   ├── workers/                          # Background job processors
+│   │   ├── src/
+│   │   │   ├── scan-worker.ts           # Main scan worker
+│   │   │   ├── processors/
+│   │   │   │   ├── sast-processor.ts
+│   │   │   │   ├── sca-processor.ts
+│   │   │   │   ├── secrets-processor.ts
+│   │   │   │   ├── iac-processor.ts
+│   │   │   │   └── container-processor.ts
+│   │   │   ├── queue/
+│   │   │   │   ├── config.ts
+│   │   │   │   └── handlers.ts
+│   │   │   └── types/
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   │
+│   └── ai-service/                       # AI reasoning microservice
+│       ├── src/
+│       │   ├── server.ts                 # Standalone Fastify service
+│       │   ├── services/
+│       │   │   ├── enrichment.ts        # Explain findings
+│       │   │   ├── deduplication.ts     # Merge similar issues
+│       │   │   ├── prioritization.ts    # Risk scoring
+│       │   │   └── auto-fix.ts          # Generate patches
+│       │   ├── models/
+│       │   │   ├── gemini-client.ts
+│       │   │   └── prompts.ts
+│       │   └── types/
+│       ├── package.json
+│       └── tsconfig.json
+│
+├── packages/                             # Shared libraries
+│   ├── shared/                          # Common utilities
+│   │   ├── src/
+│   │   │   ├── db/
+│   │   │   │   ├── supabase.ts
+│   │   │   │   └── types.ts
+│   │   │   ├── git/
+│   │   │   │   ├── github-client.ts
+│   │   │   │   ├── gitlab-client.ts
+│   │   │   │   └── fetcher.ts
+│   │   │   ├── queue/
+│   │   │   │   └── redis-queue.ts
+│   │   │   ├── logger/
+│   │   │   │   └── winston.ts
+│   │   │   └── utils/
+│   │   │       ├── retry.ts
+│   │   │       └── rate-limit.ts
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   │
+│   ├── scanners/                        # Scanner abstractions
+│   │   ├── src/
+│   │   │   ├── base/
+│   │   │   │   └── scanner-interface.ts
+│   │   │   ├── sast/
+│   │   │   │   ├── semgrep-scanner.ts
+│   │   │   │   └── types.ts
+│   │   │   ├── sca/
+│   │   │   │   ├── osv-scanner.ts
+│   │   │   │   └── types.ts
+│   │   │   ├── secrets/
+│   │   │   │   ├── gitleaks-scanner.ts
+│   │   │   │   └── types.ts
+│   │   │   ├── iac/
+│   │   │   │   ├── checkov-scanner.ts
+│   │   │   │   └── types.ts
+│   │   │   ├── container/
+│   │   │   │   ├── trivy-scanner.ts
+│   │   │   │   └── types.ts
+│   │   │   └── normalization/
+│   │   │       ├── normalizer.ts
+│   │   │       └── schema.ts
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   │
+│   └── types/                           # Shared TypeScript types
+│       ├── src/
+│       │   ├── scan.ts
+│       │   ├── vulnerability.ts
+│       │   ├── repository.ts
+│       │   └── user.ts
+│       ├── package.json
+│       └── tsconfig.json
+│
+├── infrastructure/                       # Deployment configs
+│   ├── docker/
+│   │   ├── api.Dockerfile
+│   │   ├── worker.Dockerfile
+│   │   ├── ai-service.Dockerfile
+│   │   ├── scanners/
+│   │   │   ├── semgrep.Dockerfile
+│   │   │   ├── osv.Dockerfile
+│   │   │   ├── gitleaks.Dockerfile
+│   │   │   ├── checkov.Dockerfile
+│   │   │   └── trivy.Dockerfile
+│   │   └── docker-compose.yml
+│   │
+│   ├── kubernetes/                      # K8s manifests (future)
+│   │   ├── api-deployment.yaml
+│   │   ├── worker-deployment.yaml
+│   │   └── redis-statefulset.yaml
+│   │
+│   └── terraform/                       # IaC for cloud (future)
+│       └── aws/
+│           ├── main.tf
+│           └── variables.tf
+│
+├── scripts/                             # Dev/ops scripts
+│   ├── dev-setup.sh
+│   ├── run-scanners-local.sh
+│   └── seed-db.ts
+│
+├── .github/
+│   └── workflows/
+│       ├── ci.yml
+│       └── deploy.yml
+│
+├── package.json                         # Root package.json (monorepo)
+├── pnpm-workspace.yaml                  # PNPM workspaces
+├── turbo.json                           # Turborepo config
+├── .env.example
+└── README.md

@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@google-ai/generativelanguage": "^3.5.0",
+    "@google/generative-ai": "^0.24.1",
+    "@supabase/ssr": "^0.7.0"
+  }
+}

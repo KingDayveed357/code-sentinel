@@ -1,0 +1,194 @@
+┌─────────────────────────────────────────────────────────────────┐
+│                    SINGLE FASTIFY APP                           │
+│                  (Monolithic but Modular)                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │              API LAYER (HTTP Routes)                   │    │
+│  ├────────────────────────────────────────────────────────┤    │
+│  │ /api/auth          → Authentication module             │    │
+│  │ /api/repositories  → Repository management             │    │
+│  │ /api/scans         → Scan orchestration                │    │
+│  │ /api/vulnerabilities → Findings API                    │    │
+│  └────────────────────────────────────────────────────────┘    │
+│                           ▼                                     │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │           SERVICE LAYER (Business Logic)               │    │
+│  ├────────────────────────────────────────────────────────┤    │
+│  │ • GitHubService     • ScanService                      │    │
+│  │ • AIService         • VulnerabilityService             │    │
+│  │ • NotificationService                                  │    │
+│  └────────────────────────────────────────────────────────┘    │
+│                           ▼                                     │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │         SCANNER ORCHESTRATION (In-Process)             │    │
+│  ├────────────────────────────────────────────────────────┤    │
+│  │ • SemgrepRunner   • OSVRunner   • GitleaksRunner       │    │
+│  │ • CheckovRunner   • TrivyRunner                        │    │
+│  │                                                         │    │
+│  │ Executes scanners via child_process (CLI tools)        │    │
+│  └────────────────────────────────────────────────────────┘    │
+│                           ▼                                     │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │      BACKGROUND JOBS (In-Process Queue)                │    │
+│  ├────────────────────────────────────────────────────────┤    │
+│  │ • BullMQ (Redis) or Fastify's job queue               │    │
+│  │ • Worker threads for parallel scanning                 │    │
+│  └────────────────────────────────────────────────────────┘    │
+│                           ▼                                     │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │              DATA LAYER (Supabase)                     │    │
+│  ├────────────────────────────────────────────────────────┤    │
+│  │ • Users, Repos, Scans, Vulnerabilities                 │    │
+│  └────────────────────────────────────────────────────────┘    │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    STEP 1: TRIGGER SCAN                         │
+├─────────────────────────────────────────────────────────────────┤
+│ User triggers scan via API → POST /api/scans/start             │
+│ • Validate user plan limits                                     │
+│ • Check concurrent scan quota                                   │
+│ • Create scan record (status: pending)                          │
+│ • Enqueue job → Redis/BullMQ                                    │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  STEP 2: FETCH REPOSITORY CODE                  │
+├─────────────────────────────────────────────────────────────────┤
+│ Worker picks job from queue                                     │
+│ • Update scan status → "running"                                │
+│ • Fetch GitHub access token from DB                             │
+│ • Clone/fetch repo using GitHub API                             │
+│ • Filter code files (exclude binaries, node_modules)            │
+│ • Store files in temp workspace: /tmp/scan-{scanId}/           │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              STEP 3: PARALLEL SCANNER EXECUTION                 │
+├─────────────────────────────────────────────────────────────────┤
+│ Launch all scanners concurrently (Docker containers):           │
+│                                                                  │
+│ ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│ │ Semgrep SAST │  │  OSV.dev SCA │  │   Gitleaks   │          │
+│ │ (p/security  │  │  (deps scan) │  │   (secrets)  │          │
+│ │  -audit)     │  │              │  │              │          │
+│ └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
+│        │                  │                  │                  │
+│ ┌──────▼───────┐  ┌──────▼───────┐                             │
+│ │   Checkov    │  │    Trivy     │                             │
+│ │  (IaC scan)  │  │ (container)  │                             │
+│ └──────┬───────┘  └──────┬───────┘                             │
+│        │                  │                                     │
+│        └──────────────────┼─────────────────────────────────┐  │
+│                           │                                 │  │
+│ Each scanner outputs raw JSON to:                          │  │
+│ /tmp/scan-{scanId}/results/{scanner}-output.json           │  │
+└─────────────────────────────────────────────────────────────┘  │
+                             │                                    │
+                             ▼                                    │
+┌─────────────────────────────────────────────────────────────────┐
+│              STEP 4: NORMALIZATION LAYER                        │
+├─────────────────────────────────────────────────────────────────┤
+│ Parse each scanner's output and transform to unified schema:   │
+│                                                                  │
+│ {                                                                │
+│   "id": "uuid",                                                  │
+│   "scan_id": "uuid",                                             │
+│   "scanner": "semgrep|osv|gitleaks|checkov|trivy",              │
+│   "type": "sast|sca|secret|iac|container",                      │
+│   "severity": "critical|high|medium|low|info",                  │
+│   "title": "SQL Injection in user login",                       │
+│   "description": "Unsanitized user input...",                   │
+│   "file_path": "src/auth/login.ts",                             │
+│   "line_start": 42,                                              │
+│   "line_end": 45,                                                │
+│   "code_snippet": "const query = `SELECT...`",                  │
+│   "cwe": ["CWE-89"],                                             │
+│   "cve": null,                                                   │
+│   "rule_id": "javascript.express.sql-injection",                │
+│   "confidence": 0.95,                                            │
+│   "metadata": {                                                  │
+│     "owasp": ["A03:2021"],                                       │
+│     "references": ["https://..."]                                │
+│   }                                                              │
+│ }                                                                │
+│                                                                  │
+│ • Store raw findings in DB (table: vulnerabilities_raw)         │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│           STEP 5: AI REASONING & ENRICHMENT                     │
+├─────────────────────────────────────────────────────────────────┤
+│ Send normalized findings to AI service (Gemini 2.5 Flash)      │
+│                                                                  │
+│ A. DEDUPLICATION:                                                │
+│    • Group similar findings (same file, similar pattern)        │
+│    • Merge duplicates across scanners                           │
+│    • Keep highest confidence version                            │
+│                                                                  │
+│ B. ENRICHMENT:                                                   │
+│    For each unique finding:                                     │
+│    • Generate plain-English explanation                         │
+│    • Explain business impact                                    │
+│    • Provide remediation steps                                  │
+│    • Generate auto-fix patch (if simple)                        │
+│    • Assess if it's a false positive (FP score)                 │
+│                                                                  │
+│ C. PRIORITIZATION:                                               │
+│    • Risk score (0-100) based on:                               │
+│      - Severity                                                  │
+│      - Exploitability                                            │
+│      - Reachability (is code path used?)                        │
+│      - Data sensitivity (touches PII?)                          │
+│    • Assign priority: P0 (critical), P1, P2, P3                 │
+│                                                                  │
+│ Store enriched data in: vulnerabilities_enriched table          │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              STEP 6: STORE RESULTS IN SUPABASE                  │
+├─────────────────────────────────────────────────────────────────┤
+│ Tables:                                                          │
+│ • scans (status: completed, summary stats)                      │
+│ • vulnerabilities (deduplicated, enriched findings)             │
+│ • scan_metrics (scan duration, scanner performance)             │
+│ • audit_logs (track all actions)                                │
+│                                                                  │
+│ Update scan record:                                              │
+│ {                                                                │
+│   "status": "completed",                                         │
+│   "completed_at": "2024-12-02T10:30:00Z",                       │
+│   "total_findings": 47,                                          │
+│   "critical_count": 3,                                           │
+│   "high_count": 12,                                              │
+│   "medium_count": 20,                                            │
+│   "low_count": 12,                                               │
+│   "false_positive_count": 8,                                     │
+│   "duration_seconds": 145                                        │
+│ }                                                                │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   STEP 7: CLEANUP & NOTIFY                      │
+├─────────────────────────────────────────────────────────────────┤
+│ • Delete temp workspace: rm -rf /tmp/scan-{scanId}/             │
+│ • Send webhook notification (if configured)                     │
+│ • Trigger dashboard refresh (WebSocket/SSE)                     │
+│ • Log completion event                                           │
+└─────────────────────────────────────────────────────────────────┘
