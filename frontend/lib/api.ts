@@ -23,6 +23,10 @@ export async function apiFetch(endpoint: string, options: FetchOptions = {}) {
     }
 
     fetchHeaders["Authorization"] = `Bearer ${session.access_token}`;
+    const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+    if (activeWorkspaceId) {
+      fetchHeaders['X-Workspace-ID'] = activeWorkspaceId;
+    }
   }
 
   // Add Content-Type if body exists

@@ -23,7 +23,7 @@ export interface ScanRun {
 export interface ScanJobPayload {
     scanId: string;
     repositoryId: string;
-    userId: string;
+    workspaceId: string; // Changed from userId - workspace-scoped
     branch: string;
     scanType: 'quick' | 'full' | 'custom';
 }

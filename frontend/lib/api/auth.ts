@@ -1,4 +1,5 @@
-// lib/api/auth.ts
+// lib/api/auth.ts (UPDATED)
+
 import { apiFetch } from "../api";
 
 export const authApi = {
@@ -13,7 +14,9 @@ export const authApi = {
   },
 
   /**
-   * Complete OAuth callback - creates user profile and integration
+   * Complete OAuth callback - creates user profile ONLY
+   * ✅ UPDATED: No longer creates integrations
+   * 
    * @param providerToken - GitHub access token from OAuth session
    */
   completeOAuthCallback: async (providerToken: string): Promise<{

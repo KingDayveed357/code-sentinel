@@ -20,6 +20,7 @@ import githubIssuesRoutes from './modules/github-issues/routes';
 import webhooksRoutes from './modules/webhook/route';
 import entitlementsRoutes from './modules/entitlements/routes';
 import teamsRoutes from './modules/teams/routes';
+import workspacesRoutes from './modules/workspaces/routes';
 
 // Workers
 import { processScanJob } from './modules/scans/worker';
@@ -108,6 +109,7 @@ export function buildServer() {
   app.register(webhooksRoutes, { prefix: '/api/webhooks' })
   app.register(entitlementsRoutes, { prefix: '/api/me' });
   app.register(teamsRoutes, { prefix: '/api/teams' });
+  app.register(workspacesRoutes, { prefix: '/api/workspaces' });
 
 
   // Global error handler

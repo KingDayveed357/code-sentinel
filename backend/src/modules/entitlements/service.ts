@@ -6,6 +6,9 @@ export class EntitlementsService {
 
   /**
    * Check if user can perform an action (repositories)
+   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
+   *                  The parameter name is kept as userId for backward compatibility
+   *                  during migration. Usage tracking tables still use user_id column.
    */
   async checkRepositoryLimit(
     userId: string,
@@ -54,6 +57,9 @@ export class EntitlementsService {
 
   /**
    * Check if user can start a scan
+   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
+   *                  The parameter name is kept as userId for backward compatibility
+   *                  during migration. Usage tracking tables still use user_id column.
    */
   async checkScanLimit(
     userId: string,
@@ -107,6 +113,9 @@ export class EntitlementsService {
 
   /**
    * Increment scan usage when scan starts
+   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
+   *                  The parameter name is kept as userId for backward compatibility
+   *                  during migration. Usage tracking tables still use user_id column.
    */
   async trackScanStart(userId: string, scanId: string): Promise<void> {
     const { year, month } = this.getCurrentPeriod();
@@ -124,6 +133,9 @@ export class EntitlementsService {
 
   /**
    * Decrement concurrent scans when scan completes
+   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
+   *                  The parameter name is kept as userId for backward compatibility
+   *                  during migration. Usage tracking tables still use user_id column.
    */
   async trackScanComplete(userId: string, scanId: string): Promise<void> {
     const { year, month } = this.getCurrentPeriod();
@@ -181,6 +193,10 @@ export class EntitlementsService {
 
   /**
    * Get current usage for user (for /me/entitlements)
+   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
+   *                  The parameter name is kept as userId for backward compatibility
+   *                  during migration. Usage tracking tables still use user_id column.
+   *                  TODO: Migrate usage_tracking and usage_history tables to use workspace_id.
    */
   async getUserUsage(userId: string, plan: string) {
     const usage = await this.getOrCreateUsageRecord(userId, plan);

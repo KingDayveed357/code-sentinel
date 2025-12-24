@@ -22,10 +22,11 @@ export async function getOnboardingStatusController(
     reply: FastifyReply
 ) {
     const userId = request.profile!.id;
-    const status = await service.getOnboardingStatus(request.server, userId);
+    const workspaceId = request.workspace!.id;
+    const status = await service.getOnboardingStatus(request.server, userId, workspaceId);
 
     return reply.send({
-        status,
+        ...status,
         user: request.profile,
     });
 }
@@ -38,8 +39,8 @@ export async function getRepositoriesController(
     request: FastifyRequest,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
-    const repositories = await service.fetchGitHubRepositories(request.server, userId);
+    const workspaceId = request.workspace!.id;
+    const repositories = await service.fetchGitHubRepositories(request.server, workspaceId);
 
     return reply.send({ repositories });
 }
@@ -52,13 +53,13 @@ export async function saveRepositoriesController(
     request: FastifyRequest<{ Body: SaveRepositoriesInput }>,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
+    const workspaceId = request.workspace!.id;
     const userPlan = request.profile!.plan;
     const { repositories, provider } = saveRepositoriesSchema.parse(request.body);
 
     const result = await service.saveRepositories(
         request.server,
-        userId,
+        workspaceId,
         userPlan,
         repositories,
         provider

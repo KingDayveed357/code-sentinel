@@ -6,6 +6,7 @@ import {
   requireProfile,
   requireOnboardingCompleted,
 } from '../../middleware/gatekeepers';
+import { resolveWorkspace } from '../../middleware/workspace';
 import { ScannerOrchestrator } from '../../scanners/orchestrator';
 
 export default async function scansRoutes(fastify: FastifyInstance) {
@@ -15,6 +16,7 @@ export default async function scansRoutes(fastify: FastifyInstance) {
     requireAuth,
     requireProfile,
     requireOnboardingCompleted,
+    resolveWorkspace
   ];
 
   /**

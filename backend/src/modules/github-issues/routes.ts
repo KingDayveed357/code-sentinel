@@ -7,6 +7,8 @@ import {
   requireProfile,
   requireOnboardingCompleted,
 } from '../../middleware/gatekeepers';
+import { resolveWorkspace } from '../../middleware/workspace';
+import { requireWorkspace } from '../../middleware/gatekeepers';
 
 export default async function githubIssuesRoutes(fastify: FastifyInstance) {
   const preHandler = [
@@ -15,6 +17,8 @@ export default async function githubIssuesRoutes(fastify: FastifyInstance) {
     requireAuth,
     requireProfile,
     requireOnboardingCompleted,
+    resolveWorkspace,
+    requireWorkspace,
   ];
 
   /**

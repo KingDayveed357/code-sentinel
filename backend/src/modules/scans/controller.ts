@@ -12,14 +12,14 @@ export async function startScanController(
   request: FastifyRequest<{ Params: any; Body: any }>,
   reply: FastifyReply
 ) {
-  const userId = request.profile!.id;
+  const workspaceId = request.workspace!.id;
   const userPlan = request.profile!.plan;
   const { repoId } = repoIdSchema.parse(request.params);
   const { branch, scan_type } = startScanSchema.parse(request.body);
 
   const result = await service.startScan(
     request.server,
-    userId,
+    workspaceId,
     userPlan,
     repoId,
     branch,
@@ -33,13 +33,13 @@ export async function getScanHistoryController(
   request: FastifyRequest<{ Params: any; Querystring: any }>,
   reply: FastifyReply
 ) {
-  const userId = request.profile!.id;
+  const workspaceId = request.workspace!.id;
   const { repoId } = repoIdSchema.parse(request.params);
   const { page, limit } = scanHistorySchema.parse(request.query);
 
   const result = await service.getScanHistory(
     request.server,
-    userId,
+    workspaceId,
     repoId,
     page,
     limit
@@ -52,10 +52,10 @@ export async function getScanStatusController(
   request: FastifyRequest<{ Params: any }>,
   reply: FastifyReply
 ) {
-  const userId = request.profile!.id;
+  const workspaceId = request.workspace!.id;
   const { scanId } = scanIdSchema.parse(request.params);
 
-  const result = await service.getScanStatus(request.server, userId, scanId);
+  const result = await service.getScanStatus(request.server, workspaceId, scanId);
 
   return reply.send(result);
 }
@@ -65,10 +65,10 @@ export async function getScanLogsController(
   request: FastifyRequest<{ Params: any }>,
   reply: FastifyReply
 ) {
-  const userId = request.profile!.id;
+  const workspaceId = request.workspace!.id;
   const { scanId } = scanIdSchema.parse(request.params);
 
-  const result = await service.getScanLogs(request.server, userId, scanId);
+  const result = await service.getScanLogs(request.server, workspaceId, scanId);
 
   return reply.send(result);
 }
@@ -77,7 +77,7 @@ export async function exportScanController(
   request: FastifyRequest<{ Params: any; Querystring: any }>,
   reply: FastifyReply
 ) {
-  const userId = request.profile!.id;
+  const workspaceId = request.workspace!.id;
   const { scanId } = scanIdSchema.parse(request.params);
   const format = (request.query as any).format || 'json';
 
@@ -87,7 +87,7 @@ export async function exportScanController(
 
   const result = await service.exportScanResults(
     request.server,
-    userId,
+    workspaceId,
     scanId,
     format
   );
@@ -109,10 +109,10 @@ export async function cancelScanController(
   request: FastifyRequest<{ Params: any }>,
   reply: FastifyReply
 ) {
-  const userId = request.profile!.id;
+  const workspaceId = request.workspace!.id;
   const { scanId } = scanIdSchema.parse(request.params);
 
-  const result = await service.cancelScan(request.server, userId, scanId);
+  const result = await service.cancelScan(request.server, workspaceId, scanId);
 
   return reply.send(result);
 }

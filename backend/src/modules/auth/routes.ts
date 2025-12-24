@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import * as controller from "./controller";
 import { verifyAuth, loadProfile } from "../../middleware/auth";
 import { requireAuth, requireProfile } from "../../middleware/gatekeepers";
+import { resolveWorkspace } from "../../middleware/workspace";
 
 export default async function authRoutes(fastify: FastifyInstance) {
     // Public route - initiate GitHub OAuth
@@ -14,7 +15,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
     fastify.post(
         "/oauth/callback",
         {
-            preHandler: [verifyAuth],
+            // preHandler: [verifyAuth],
         },
         async (req, reply) => controller.oauthCallbackController(fastify, req, reply)
     );
@@ -48,7 +49,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
     fastify.post(
         "/resync-github",
         {
-            preHandler: [verifyAuth, loadProfile, requireAuth, requireProfile],
+            preHandler:[verifyAuth, loadProfile, requireAuth, requireProfile, resolveWorkspace],
         },
         async (req, reply) => controller.resyncGitHubController(fastify, req, reply)
     );

@@ -58,6 +58,32 @@ export class TeamService {
     // Add creator as owner
     await this.addMember(team.id, userId, 'owner', userId);
 
+    // Create team workspace
+    try {
+      const { data: workspace, error: workspaceError } = await this.fastify.supabase
+        .from('workspaces')
+        .insert({
+          name: `${data.name} Workspace`,
+          slug: `team-${slug}`,
+          type: 'team',
+          team_id: team.id,
+          plan: data.plan || 'Team',
+          settings: {},
+        })
+        .select()
+        .single();
+
+      if (workspaceError || !workspace) {
+        this.fastify.log.error({ workspaceError, teamId: team.id }, 'Failed to create team workspace');
+        // Don't fail team creation if workspace creation fails - can be fixed later
+      } else {
+        this.fastify.log.info({ teamId: team.id, workspaceId: workspace.id }, 'Team workspace created');
+      }
+    } catch (error) {
+      this.fastify.log.error({ error, teamId: team.id }, 'Error creating team workspace');
+      // Continue - team creation succeeds even if workspace creation fails
+    }
+
     this.fastify.log.info({ teamId: team.id, userId }, 'Team created');
 
     return team as Team;

@@ -161,6 +161,17 @@ export function requireRole(allowedRoles: string[]) {
     };
 }
 
+
+export async function requireWorkspace(
+    request: FastifyRequest,
+    reply: FastifyReply
+) {
+    if (!request.workspace) {
+        throw request.server.httpErrors.badRequest('Workspace context required');
+    }
+}
+
+
 // export async function requireFeature(feature: string) {
 //   return async (request, reply) => {
 //     const hasAccess = await entitlements.hasFeature(

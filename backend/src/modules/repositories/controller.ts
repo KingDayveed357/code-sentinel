@@ -25,10 +25,10 @@ export async function listRepositoriesController(
     request: FastifyRequest<{ Querystring: any }>,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
+    const workspaceId = request.workspace!.id; 
     const params = listRepositoriesSchema.parse(request.query);
 
-    const result = await service.listRepositories(request.server, userId, params);
+    const result = await service.listRepositories(request.server, workspaceId, params);
 
     return reply.send(result);
 }
@@ -41,8 +41,8 @@ export async function getProvidersController(
     request: FastifyRequest,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
-    const providers = await service.getConnectedProviders(request.server, userId);
+    const workspaceId = request.workspace!.id;
+    const providers = await service.getConnectedProviders(request.server, workspaceId);
 
     return reply.send(providers);
 }
@@ -55,8 +55,8 @@ export async function getGitHubReposController(
     request: FastifyRequest,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
-    const result = await service.fetchGitHubReposForImport(request.server, userId);
+    const workspaceId = request.workspace!.id;
+    const result = await service.fetchGitHubReposForImport(request.server, workspaceId);
 
     return reply.send(result);
 }
@@ -69,13 +69,13 @@ export async function importRepositoriesController(
     request: FastifyRequest<{ Body: any }>,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
+    const workspaceId = request.workspace!.id; 
     const userPlan = request.profile!.plan;
     const { repositories, provider } = importRepositoriesSchema.parse(request.body);
 
     const result = await service.importRepositories(
         request.server,
-        userId,
+        workspaceId,
         userPlan,
         repositories,
         provider
@@ -92,8 +92,8 @@ export async function syncRepositoriesController(
     request: FastifyRequest,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
-    const result = await service.syncRepositories(request.server, userId);
+    const workspaceId = request.workspace!.id;
+    const result = await service.syncRepositories(request.server, workspaceId);
 
     return reply.send(result);
 }
@@ -106,10 +106,10 @@ export async function getRepositoryController(
     request: FastifyRequest<{ Params: any }>,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
+    const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
 
-    const repository = await service.getRepository(request.server, userId, id);
+    const repository = await service.getRepository(request.server, workspaceId, id);
 
     return reply.send(repository);
 }
@@ -122,13 +122,13 @@ export async function updateRepositoryController(
     request: FastifyRequest<{ Params: any; Body: any }>,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
+    const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
     const updates = updateRepositorySchema.parse(request.body);
 
     const repository = await service.updateRepository(
         request.server,
-        userId,
+        workspaceId,
         id,
         updates
     );
@@ -144,10 +144,10 @@ export async function deleteRepositoryController(
     request: FastifyRequest<{ Params: any }>,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
+    const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
 
-    const result = await service.deleteRepository(request.server, userId, id);
+    const result = await service.deleteRepository(request.server, workspaceId, id);
 
     return reply.send(result);
 }
@@ -160,11 +160,11 @@ export async function getRepositorySettingsController(
     request: FastifyRequest<{ Params: any }>,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
+    const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
 
     // Verify user owns this repository
-    const repo = await service.getRepository(request.server, userId, id);
+    const repo = await service.getRepository(request.server, workspaceId, id);
 
     // Get settings
     const settings = await getRepositorySettings(request.server, id);
@@ -172,7 +172,7 @@ export async function getRepositorySettingsController(
     // Get webhook status with GitHub validation
     const webhookStatus = await getWebhookStatus(
         request.server,
-        userId,
+        workspaceId,
         id,
         repo.full_name
     );
@@ -222,12 +222,12 @@ export async function updateRepositorySettingsController(
     request: FastifyRequest<{ Params: any; Body: any }>,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
+    const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
     const updates = updateSettingsSchema.parse(request.body);
 
     // Verify user owns this repository
-    const repo = await service.getRepository(request.server, userId, id);
+    const repo = await service.getRepository(request.server, workspaceId, id);
 
     // Update settings
     const settings = await updateRepositorySettings(request.server, id, updates);
@@ -237,7 +237,7 @@ export async function updateRepositorySettingsController(
         // Verify webhook status with GitHub
         const webhookStatus = await getWebhookStatus(
             request.server,
-            userId,
+            workspaceId,
             id,
             repo.full_name
         );
@@ -246,7 +246,7 @@ export async function updateRepositorySettingsController(
             request.server.log.info({ repositoryId: id }, 'Auto-registering webhook due to auto_scan_enabled');
             await registerGitHubWebhook(
                 request.server,
-                userId,
+                workspaceId,
                 id,
                 repo.full_name
             );
@@ -267,16 +267,16 @@ export async function registerWebhookController(
     request: FastifyRequest<{ Params: any }>,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
+    const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
 
     // Verify user owns this repository
-    const repo = await service.getRepository(request.server, userId, id);
+    const repo = await service.getRepository(request.server, workspaceId, id);
 
     // Register webhook
     const result = await registerGitHubWebhook(
         request.server,
-        userId,
+        workspaceId,
         id,
         repo.full_name
     );
@@ -298,16 +298,16 @@ export async function deleteWebhookController(
     request: FastifyRequest<{ Params: any }>,
     reply: FastifyReply
 ) {
-    const userId = request.profile!.id;
+    const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
 
     // Verify user owns this repository
-    const repo = await service.getRepository(request.server, userId, id);
+    const repo = await service.getRepository(request.server, workspaceId, id);
 
     // Delete webhook
     const result = await deleteGitHubWebhook(
         request.server,
-        userId,
+        workspaceId,
         id,
         repo.full_name
     );

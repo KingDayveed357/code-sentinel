@@ -1,4 +1,5 @@
 // src/modules/integrations/github/service.ts
+
 import type { FastifyInstance } from 'fastify';
 import { getIntegration } from "../service"
 
@@ -19,22 +20,28 @@ export interface GitHubRepository {
 
 /**
  * Fetch GitHub repositories
+ * 
+ * ✅ FIXED: Missing integration is now 412 Precondition Failed (product state)
+ * 
+ * @param workspaceId - Workspace ID for fetching integration token
  */
 export async function fetchGitHubRepositories(
   fastify: FastifyInstance,
-  userId: string
+  workspaceId: string
 ): Promise<GitHubRepository[]> {
-  const integration = await getIntegration(fastify, userId, 'github');
+  const integration = await getIntegration(fastify, workspaceId, 'github');
 
+  // ✅ CRITICAL FIX: Missing GitHub integration is NOT an auth error
+  // It's a product state - user needs to connect GitHub first
   if (!integration || !integration.access_token) {
-    throw fastify.httpErrors.unauthorized(
-      'GitHub integration not found. Please connect your GitHub account.'
+    throw fastify.httpErrors.preconditionFailed(
+      'GitHub integration not connected. Please connect your GitHub account first.'
     );
   }
 
   if (!integration.connected) {
-    throw fastify.httpErrors.forbidden(
-      'GitHub integration not connected. Please reconnect your account.'
+    throw fastify.httpErrors.preconditionFailed(
+      'GitHub integration disconnected. Please reconnect your account.'
     );
   }
 
@@ -51,6 +58,7 @@ export async function fetchGitHubRepositories(
 
     if (!response.ok) {
       if (response.status === 401) {
+        // Token expired - this IS an auth error
         throw fastify.httpErrors.unauthorized(
           'GitHub token expired. Please reconnect your account.'
         );
@@ -75,7 +83,7 @@ export async function fetchGitHubRepositories(
       forks: repo.forks_count,
     }));
   } catch (err: any) {
-    fastify.log.error({ err, userId }, 'Failed to fetch GitHub repositories');
+    fastify.log.error({ err, workspaceId }, 'Failed to fetch GitHub repositories');
 
     if (err.statusCode) {
       throw err;
@@ -89,10 +97,11 @@ export async function fetchGitHubRepositories(
 
 /**
  * Get GitHub account info
+ * @param workspaceId - Workspace ID for fetching integration token
  */
 export async function getGitHubAccountInfo(
   fastify: FastifyInstance,
-  userId: string
+  workspaceId: string
 ): Promise<{
   username: string;
   avatar_url: string;
@@ -100,10 +109,10 @@ export async function getGitHubAccountInfo(
   email: string | null;
   public_repos: number;
 }> {
-  const integration = await getIntegration(fastify, userId, 'github');
+  const integration = await getIntegration(fastify, workspaceId, 'github');
 
   if (!integration || !integration.access_token) {
-    throw fastify.httpErrors.unauthorized('GitHub integration not found');
+    throw fastify.httpErrors.preconditionFailed('GitHub integration not connected');
   }
 
   try {
@@ -128,7 +137,7 @@ export async function getGitHubAccountInfo(
       public_repos: user.public_repos,
     };
   } catch (err) {
-    fastify.log.error({ err, userId }, 'Failed to fetch GitHub account info');
+    fastify.log.error({ err, workspaceId }, 'Failed to fetch GitHub account info');
     throw fastify.httpErrors.internalServerError(
       'Failed to fetch GitHub account information'
     );
@@ -144,13 +153,17 @@ export interface RepoFile {
   language: string | null;
 }
 
+/**
+ * Fetch repository code from GitHub
+ * @param workspaceId - Workspace ID for fetching integration token
+ */
 export async function fetchRepositoryCode(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   repoFullName: string,
   branch: string = 'main'
 ): Promise<RepoFile[]> {
-  const integration = await getIntegration(fastify, userId, 'github');
+  const integration = await getIntegration(fastify, workspaceId, 'github');
 
   if (!integration || !integration.access_token) {
     throw new Error('GitHub integration not found');
@@ -179,7 +192,7 @@ export async function fetchRepositoryCode(
   const codeExtensions = new Set([
     '.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.go', '.rb', '.php',
     '.c', '.cpp', '.cs', '.swift', '.kt', '.rs', '.scala', '.sql',
-    '.sh', '.yaml', '.yml', '.json', '.tf', '.hcl', // Added IaC files
+    '.sh', '.yaml', '.yml', '.json', '.tf', '.hcl',
   ]);
 
   const codeFiles = treeData.tree.filter((item: any) => {

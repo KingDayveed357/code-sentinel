@@ -5,7 +5,8 @@ export type IntegrationProvider = 'github' | 'gitlab' | 'bitbucket' | 'slack';
 
 export interface Integration {
   id: string;
-  user_id: string;
+  workspace_id: string;
+  // user_id: string;
   provider: IntegrationProvider;
   connected: boolean;
   access_token: string | null;
@@ -22,13 +23,13 @@ export interface Integration {
  */
 export async function getIntegration(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   provider: IntegrationProvider
 ): Promise<Integration | null> {
   const { data, error } = await fastify.supabase
     .from('integrations')
     .select('*')
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .eq('provider', provider)
     .single();
 
@@ -44,15 +45,15 @@ export async function getIntegration(
  */
 export async function getUserIntegrations(
   fastify: FastifyInstance,
-  userId: string
+  workspaceId: string
 ): Promise<Integration[]> {
   const { data, error } = await fastify.supabase
     .from('integrations')
     .select('*')
-    .eq('user_id', userId);
+    .eq('workspace_id', workspaceId);
 
   if (error) {
-    fastify.log.error({ error, userId }, 'Failed to fetch integrations');
+    fastify.log.error({ error, workspaceId }, 'Failed to fetch integrations');
     return [];
   }
 
@@ -64,7 +65,7 @@ export async function getUserIntegrations(
  */
 export async function upsertIntegration(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   provider: IntegrationProvider,
   data: {
     access_token: string;
@@ -77,7 +78,7 @@ export async function upsertIntegration(
     .from('integrations')
     .upsert(
       {
-        user_id: userId,
+        workspace_id: workspaceId,
         provider,
         connected: true,
         access_token: data.access_token,
@@ -87,17 +88,17 @@ export async function upsertIntegration(
         connected_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'user_id,provider' }
+      { onConflict: 'workspace_id,provider' }
     )
     .select()
     .single();
 
   if (error || !integration) {
-    fastify.log.error({ error, userId, provider }, 'Failed to upsert integration');
+    fastify.log.error({ error, workspaceId, provider }, 'Failed to upsert integration');
     throw fastify.httpErrors.internalServerError('Failed to save integration');
   }
 
-  fastify.log.info({ userId, provider }, 'Integration saved');
+  fastify.log.info({ workspaceId, provider }, 'Integration saved');
   return integration as Integration;
 }
 
@@ -106,7 +107,7 @@ export async function upsertIntegration(
  */
 export async function disconnectIntegration(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   provider: IntegrationProvider
 ): Promise<void> {
   const { error } = await fastify.supabase
@@ -117,15 +118,15 @@ export async function disconnectIntegration(
       refresh_token: null,
       updated_at: new Date().toISOString(),
     })
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .eq('provider', provider);
 
   if (error) {
-    fastify.log.error({ error, userId, provider }, 'Failed to disconnect integration');
+    fastify.log.error({ error, workspaceId, provider }, 'Failed to disconnect integration');
     throw fastify.httpErrors.internalServerError('Failed to disconnect integration');
   }
 
-  fastify.log.info({ userId, provider }, 'Integration disconnected');
+  fastify.log.info({ workspaceId, provider }, 'Integration disconnected');
 }
 
 /**
@@ -133,10 +134,10 @@ export async function disconnectIntegration(
  */
 export async function validateIntegrationToken(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   provider: IntegrationProvider
 ): Promise<boolean> {
-  const integration = await getIntegration(fastify, userId, provider);
+  const integration = await getIntegration(fastify, workspaceId, provider);
 
   if (!integration || !integration.connected || !integration.access_token) {
     return false;
@@ -146,7 +147,7 @@ export async function validateIntegrationToken(
   if (integration.token_expires_at) {
     const expiresAt = new Date(integration.token_expires_at);
     if (expiresAt < new Date()) {
-      fastify.log.warn({ userId, provider }, 'Integration token expired');
+      fastify.log.warn({ workspaceId, provider }, 'Integration token expired');
       return false;
     }
   }
@@ -160,7 +161,7 @@ export async function validateIntegrationToken(
     }
     return true;
   } catch (error) {
-    fastify.log.error({ error, userId, provider }, 'Token validation failed');
+    fastify.log.error({ error, workspaceId, provider }, 'Token validation failed');
     return false;
   }
 }
@@ -196,4 +197,42 @@ async function validateGitLabToken(token: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Verify GitHub OAuth access token and return GitHub user
+ *
+ * Throws if token is invalid or GitHub is unreachable
+ */
+export async function verifyGitHubToken(token: string): Promise<{
+  id: number;
+  login: string;
+  email: string | null;
+  avatar_url: string;
+}> {
+  if (!token) {
+    throw new Error('GitHub token is missing');
+  }
+
+  const response = await fetch('https://api.github.com/user', {
+    headers: {
+      Authorization: `Bearer ${token}`, // modern GitHub format
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'CodeSentinel',
+    },
+  });
+
+  if (!response.ok) {
+    // Explicit failure for revoked / expired tokens
+    throw new Error('Invalid or expired GitHub token');
+  }
+
+  const data = await response.json();
+
+  return {
+    id: data.id,
+    login: data.login,
+    email: data.email,
+    avatar_url: data.avatar_url,
+  };
 }

@@ -662,21 +662,24 @@ export async function updateWebhookEventStatus(
 }
 
 /**
- * Register webhooks for all active repositories on user connection
+ * Register webhooks for all active repositories in a workspace
+ * @param workspaceId - Workspace ID for fetching repositories
+ * @param userId - User ID for integration token lookup (legacy: integrations still keyed by user_id in some paths)
  */
-export async function registerWebhooksForUser(
+export async function registerWebhooksForWorkspace(
   fastify: FastifyInstance,
+  workspaceId: string,
   userId: string
 ): Promise<{ registered: number; failed: number }> {
   let registered = 0;
   let failed = 0;
 
   try {
-    // Get all active repositories with auto-scan enabled
+    // Get all active repositories with auto-scan enabled in this workspace
     const { data: repos } = await fastify.supabase
       .from('repositories')
       .select('id, full_name, repository_settings!inner(*)')
-      .eq('user_id', userId)
+      .eq('workspace_id', workspaceId)
       .eq('status', 'active')
       .eq('repository_settings.auto_scan_enabled', true);
 
@@ -685,6 +688,8 @@ export async function registerWebhooksForUser(
     }
 
     for (const repo of repos) {
+      // Note: registerGitHubWebhook still uses userId for integration lookup
+      // This is a legacy pattern - integration should be workspace-scoped
       const result = await registerGitHubWebhook(
         fastify,
         userId,
@@ -700,12 +705,36 @@ export async function registerWebhooksForUser(
     }
 
     fastify.log.info(
-      { userId, registered, failed },
+      { workspaceId, registered, failed },
       'Bulk webhook registration completed'
     );
   } catch (error) {
-    fastify.log.error({ error, userId }, 'Bulk webhook registration failed');
+    fastify.log.error({ error, workspaceId }, 'Bulk webhook registration failed');
   }
 
   return { registered, failed };
+}
+
+/**
+ * @deprecated Use registerWebhooksForWorkspace instead
+ * Register webhooks for all active repositories on user connection
+ */
+export async function registerWebhooksForUser(
+  fastify: FastifyInstance,
+  userId: string
+): Promise<{ registered: number; failed: number }> {
+  // Legacy: Try to find user's personal workspace
+  const { data: personalWorkspace } = await fastify.supabase
+    .from('workspaces')
+    .select('id')
+    .eq('owner_id', userId)
+    .eq('type', 'personal')
+    .single();
+
+  if (!personalWorkspace) {
+    fastify.log.warn({ userId }, 'No personal workspace found for user');
+    return { registered: 0, failed: 0 };
+  }
+
+  return registerWebhooksForWorkspace(fastify, personalWorkspace.id, userId);
 }

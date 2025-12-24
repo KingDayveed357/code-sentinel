@@ -6,7 +6,9 @@ import {
   requireAuth,
   requireProfile,
   requireOnboardingCompleted,
+  requireWorkspace,
 } from '../../middleware/gatekeepers';
+import { resolveWorkspace } from '../../middleware/workspace';
 
 export default async function dashboardRoutes(fastify: FastifyInstance) {
   const preHandler = [
@@ -15,6 +17,8 @@ export default async function dashboardRoutes(fastify: FastifyInstance) {
     requireAuth,
     requireProfile,
     requireOnboardingCompleted,
+    resolveWorkspace,
+    requireWorkspace,
   ];
 
   /**

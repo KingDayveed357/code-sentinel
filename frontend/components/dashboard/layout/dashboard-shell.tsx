@@ -1,3 +1,4 @@
+// frontend/components/dashboard/layout/dashboard-shell.tsx
 "use client";
 
 import type React from "react";
@@ -22,13 +23,14 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { AIAssistant } from "@/components/dashboard/ai-assistant";
 import { useAuth } from "@/hooks/use-auth";
 import { UserNav } from "@/components/dashboard/sidebar/user-nav";
+import { WorkspaceSwitcher } from "./workspace-switcher";
 
 const navigation = [
   { name: "Overview", href: "/dashboard", icon: Home },
   { name: "Projects", href: "/dashboard/projects", icon: FolderGit2 },
   { name: "Integrations", href: "/dashboard/integrations", icon: Plug },
   { name: "Team", href: "/dashboard/teams", icon: Users },
-  { name: "Settings", href: "/dashboard/settings", icon: Settings },
+  // { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -168,6 +170,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <div className="flex-1" />
 
           <div className="flex items-center gap-2">
+            <WorkspaceSwitcher />
             <ThemeToggle />
             <Button
               variant="outline"

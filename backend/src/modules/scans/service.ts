@@ -5,7 +5,7 @@ import { EntitlementsService } from '../entitlements/service';
 
 export async function startScan(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   userPlan: string,
   repositoryId: string,
   branch: string,
@@ -15,7 +15,7 @@ export async function startScan(
     const entitlements = new EntitlementsService(fastify);
 
   //  Check limits FIRST
-  const limitCheck = await entitlements.checkScanLimit(userId, userPlan);
+  const limitCheck = await entitlements.checkScanLimit(workspaceId, userPlan);
 
   if (!limitCheck.allowed) {
     throw fastify.httpErrors.forbidden({
@@ -36,7 +36,7 @@ export async function startScan(
     .from('repositories')
     .select('id, full_name, status')
     .eq('id', repositoryId)
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .single();
 
   if (repoError || !repo) {
@@ -53,7 +53,7 @@ export async function startScan(
   const { count: runningScanCount } = await fastify.supabase
     .from('scans')
     .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .in('status', ['pending', 'running', 'normalizing', 'ai_enriching']);
 
   if ((runningScanCount || 0) >= concurrentLimit) {
@@ -75,7 +75,7 @@ export async function startScan(
   const { data: scan, error: scanError } = await fastify.supabase
     .from('scans')
     .insert({
-      user_id: userId,
+      workspace_id: workspaceId,
       repository_id: repositoryId,
       branch,
       scan_type: scanType,
@@ -96,12 +96,12 @@ export async function startScan(
 
 
   //  Track usage IMMEDIATELY (before enqueue to avoid race)
-  await entitlements.trackScanStart(userId, scan.id);
+  await entitlements.trackScanStart(workspaceId, scan.id);
   // Enqueue scan job
   await fastify.jobQueue.enqueue('scans', 'process-scan', {
     scanId: scan.id,
     repositoryId,
-    userId,
+    workspaceId,
     branch,
     scanType,
     enabledScanners,
@@ -118,7 +118,7 @@ export async function startScan(
 
 export async function getScanLogs(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   scanId: string
 ): Promise<{
   logs: Array<{
@@ -134,7 +134,7 @@ export async function getScanLogs(
     .from('scans')
     .select('id')
     .eq('id', scanId)
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .single();
 
   if (!scan) {
@@ -157,7 +157,7 @@ export async function getScanLogs(
 
 export async function getScanHistory(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   repositoryId: string,
   page: number,
   limit: number
@@ -172,7 +172,7 @@ export async function getScanHistory(
   const { data, error, count } = await fastify.supabase
     .from('scans')
     .select('*', { count: 'exact' })
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .eq('repository_id', repositoryId)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
@@ -192,7 +192,7 @@ export async function getScanHistory(
 
 export async function getScanStatus(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   scanId: string
 ): Promise<{
   scan: ScanRun;
@@ -218,7 +218,7 @@ export async function getScanStatus(
     .from('scans')
     .select('*')
     .eq('id', scanId)
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .single();
 
   if (scanError || !scan) {
@@ -261,12 +261,11 @@ export async function getScanStatus(
 
 export async function exportScanResults(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   scanId: string,
   format: 'json' | 'csv' | 'pdf'
 ): Promise<any> {
-  const { scan, summary } = await getScanStatus(fastify, userId, scanId);
-
+  const { scan, summary } = await getScanStatus(fastify, workspaceId, scanId);
   // Fetch all vulnerabilities
   const [sast, sca, secrets, iac, container] = await Promise.all([
     getVulnerabilitiesForExport(fastify, scanId, 'vulnerabilities_sast'),
@@ -304,14 +303,14 @@ export async function exportScanResults(
 
 export async function cancelScan(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   scanId: string
 ): Promise<{ success: boolean; message: string }> {
   const { data: scan, error } = await fastify.supabase
     .from('scans')
     .select('status')
     .eq('id', scanId)
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .single();
 
   if (error || !scan) {

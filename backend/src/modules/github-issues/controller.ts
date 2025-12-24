@@ -19,28 +19,28 @@ export async function getIssuesForScanController(
   request: FastifyRequest<{ Params: any }>,
   reply: FastifyReply
 ) {
-  const userId = request.profile!.id;
+  const workspaceId = request.workspace!.id;
   const { scanId } = scanIdSchema.parse(request.params);
 
   try {
-    // Verify user owns the scan
+    // Verify scan belongs to workspace
     const { data: scan, error: scanError } = await request.server.supabase
       .from('scans')
-      .select('id, user_id')
+      .select('id, workspace_id')
       .eq('id', scanId)
-      .eq('user_id', userId)
+      .eq('workspace_id', workspaceId)
       .single();
 
     if (scanError || !scan) {
       throw request.server.httpErrors.notFound('Scan not found');
     }
 
-    // Fetch all issues for this scan
+    // Fetch all issues for this scan in this workspace
     const { data: issues, error: issuesError } = await request.server.supabase
       .from('github_issues')
       .select('*')
       .eq('scan_id', scanId)
-      .eq('user_id', userId)
+      .eq('user_id', workspaceId)
       .order('created_at', { ascending: false });
 
     if (issuesError) {
@@ -69,11 +69,11 @@ export async function closeIssueController(
   request: FastifyRequest<{ Params: any }>,
   reply: FastifyReply
 ) {
-  const userId = request.profile!.id;
+  const workspaceId = request.workspace!.id;
   const { issueId } = issueIdSchema.parse(request.params);
 
   try {
-    const result = await closeGitHubIssue(request.server, userId, issueId);
+    const result = await closeGitHubIssue(request.server, workspaceId, issueId);
 
     if (!result.success) {
       throw request.server.httpErrors.internalServerError(

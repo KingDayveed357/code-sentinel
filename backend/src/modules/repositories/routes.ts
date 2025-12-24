@@ -2,6 +2,7 @@
 import type { FastifyInstance } from "fastify";
 import * as controller from "./controller";
 import { verifyAuth, loadProfile } from "../../middleware/auth";
+import { resolveWorkspace } from "../../middleware/workspace";
 import { requireAuth, requireProfile, requireOnboardingCompleted } from "../../middleware/gatekeepers";
 
 export default async function repositoriesRoutes(fastify: FastifyInstance) {
@@ -12,6 +13,7 @@ export default async function repositoriesRoutes(fastify: FastifyInstance) {
         requireAuth,
         requireProfile,
         requireOnboardingCompleted,
+        resolveWorkspace
     ];
 
     /**

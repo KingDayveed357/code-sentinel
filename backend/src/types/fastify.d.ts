@@ -41,3 +41,20 @@ declare module "fastify" {
         profile?: UserProfile;
     }
 }
+
+declare module 'fastify' {
+    interface FastifyRequest {
+        workspace?: {
+            id: string;
+            name: string;
+            slug: string;
+            type: 'personal' | 'team';
+            owner_id: string | null;
+            team_id: string | null;
+            plan: string;
+            settings: any;
+            created_at: string;
+            updated_at: string;
+        };
+    }
+}

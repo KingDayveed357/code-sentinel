@@ -54,7 +54,7 @@ export interface SecurityScore {
  */
 export async function getDashboardStats(
   fastify: FastifyInstance,
-  userId: string
+  workspaceId: string
 ): Promise<DashboardStats> {
   const now = new Date();
   const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -75,7 +75,7 @@ export async function getDashboardStats(
       const { count } = await fastify.supabase
         .from(table)
         .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
+        .eq('workspace_id', workspaceId)
         .eq('status', 'open');
       return count || 0;
     })
@@ -89,7 +89,7 @@ export async function getDashboardStats(
       const { count } = await fastify.supabase
         .from(table)
         .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
+        .eq('workspace_id', workspaceId)
         .eq('status', 'open')
         .lte('detected_at', lastDayLastMonth.toISOString());
       return count || 0;
@@ -102,13 +102,13 @@ export async function getDashboardStats(
   const { count: repoCount } = await fastify.supabase
     .from('repositories')
     .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .eq('status', 'active');
 
   const { count: lastMonthRepoCount } = await fastify.supabase
     .from('repositories')
     .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .eq('status', 'active')
     .lte('created_at', lastDayLastMonth.toISOString());
 
@@ -116,13 +116,13 @@ export async function getDashboardStats(
   const { count: scansThisMonth } = await fastify.supabase
     .from('scans')
     .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .gte('created_at', firstDayThisMonth.toISOString());
 
   const { count: scansLastMonth } = await fastify.supabase
     .from('scans')
     .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .gte('created_at', firstDayLastMonth.toISOString())
     .lte('created_at', lastDayLastMonth.toISOString());
 
@@ -132,7 +132,7 @@ export async function getDashboardStats(
       const { count } = await fastify.supabase
         .from(table)
         .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
+        .eq('workspace_id', workspaceId)
         .eq('status', 'fixed');
       return count || 0;
     })
@@ -148,7 +148,7 @@ export async function getDashboardStats(
       const { count } = await fastify.supabase
         .from(table)
         .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
+        .eq('workspace_id', workspaceId)
         .eq('status', 'fixed')
         .lte('resolved_at', lastDayLastMonth.toISOString());
       return count || 0;
@@ -191,7 +191,7 @@ export async function getDashboardStats(
  */
 export async function getCriticalVulnerabilities(
   fastify: FastifyInstance,
-  userId: string
+  workspaceId: string
 ): Promise<CriticalVulnerability[]> {
   const tables = [
     { name: 'vulnerabilities_sast', type: 'sast' as const },
@@ -206,7 +206,7 @@ export async function getCriticalVulnerabilities(
       const { data } = await fastify.supabase
         .from(name)
         .select('id, severity, title, scan_id, detected_at, cwe, file_path')
-        .eq('user_id', userId)
+        .eq('workspace_id', workspaceId)
         .eq('status', 'open')
         .in('severity', ['critical', 'high'])
         .order('detected_at', { ascending: false })
@@ -271,13 +271,13 @@ export async function getCriticalVulnerabilities(
  */
 export async function getRecentScans(
   fastify: FastifyInstance,
-  userId: string
+  workspaceId: string
 ): Promise<RecentScan[]> {
   // Get all repos
   const { data: repos } = await fastify.supabase
     .from('repositories')
     .select('id, name')
-    .eq('user_id', userId)
+    .eq('workspace_id', workspaceId)
     .order('created_at', { ascending: false });
 
   if (!repos || repos.length === 0) return [];
@@ -289,7 +289,7 @@ export async function getRecentScans(
         .from('scans')
         .select('*')
         .eq('repository_id', repo.id)
-        .eq('user_id', userId)
+        .eq('workspace_id', workspaceId)
         .order('created_at', { ascending: false })
         .limit(1);
 
@@ -326,7 +326,7 @@ export async function getRecentScans(
  */
 export async function getSecurityScore(
   fastify: FastifyInstance,
-  userId: string
+  workspaceId: string
 ): Promise<SecurityScore> {
   const tables = [
     'vulnerabilities_sast',
@@ -344,7 +344,7 @@ export async function getSecurityScore(
           const { count } = await fastify.supabase
             .from(table)
             .select('id', { count: 'exact', head: true })
-            .eq('user_id', userId)
+            .eq('workspace_id', workspaceId)
             .eq('status', 'open')
             .eq('severity', severity);
           return count || 0;

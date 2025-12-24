@@ -367,7 +367,7 @@ export async function processScanJob(
   fastify: FastifyInstance,
   job: Job<ScanJobPayload>
 ): Promise<void> {
-  const { scanId, repositoryId, userId, branch, enabledScanners } = job.data;
+  const { scanId, repositoryId, workspaceId, branch, enabledScanners } = job.data;
   
    const entitlementsService = new EntitlementsService(fastify);
   const deduplicationService = new DeduplicationService(fastify);
@@ -422,7 +422,7 @@ export async function processScanJob(
     await addLog('info', `Fetching code from ${repo.full_name}`, { branch });
     const repoFiles = await fetchRepositoryCode(
       fastify,
-      userId,
+      workspaceId,
       repo.full_name,
       branch || repo.default_branch
     );
@@ -535,7 +535,7 @@ export async function processScanJob(
     await storeVulnerabilities(
       fastify,
       scanId,
-      userId,
+      workspaceId,
       repositoryId,
       dedupResult.unique,
       enrichmentResults
@@ -616,12 +616,12 @@ export async function processScanJob(
   } finally {
 
     try {
-      await entitlementsService.trackScanComplete(userId, scanId);
+      await entitlementsService.trackScanComplete(workspaceId, scanId);
       await addLog('info', 'Concurrent scan count decremented');
     } catch (err: any) {
       await addLog('error', 'Failed to decrement concurrent scans', {
         error: err.message,
-        userId,
+        workspaceId,
         scanId,
       });
       // Don't throw - we still want to clean up workspace
@@ -653,7 +653,7 @@ async function updateScanStatus(
 async function storeVulnerabilities(
   fastify: FastifyInstance,
   scanId: string,
-  userId: string,
+  workspaceId: string,
   repositoryId: string,
   vulnerabilities: any[],
   enrichments: Map<string, any>
@@ -692,7 +692,7 @@ async function storeVulnerabilities(
       fastify.supabase.from('vulnerabilities_sast').insert(
         byType.sast.map(v => ({
           scan_id: scanId,
-          user_id: userId,
+          user_id: workspaceId, // Note: column is user_id but value is workspaceId (migration period)
           repository_id: repositoryId,
           scanner: v.scanner,
           type: v.type,
@@ -736,7 +736,7 @@ async function storeVulnerabilities(
       fastify.supabase.from('vulnerabilities_sca').insert(
         byType.sca.map(v => ({
           scan_id: scanId,
-          user_id: userId,
+          user_id: workspaceId, // Note: column is user_id but value is workspaceId (migration period)
           repository_id: repositoryId,
           scanner: v.scanner,
           type: v.type,
@@ -777,7 +777,7 @@ async function storeVulnerabilities(
       fastify.supabase.from('vulnerabilities_secrets').insert(
         byType.secret.map(v => ({
           scan_id: scanId,
-          user_id: userId,
+          user_id: workspaceId, // Note: column is user_id but value is workspaceId (migration period)
           repository_id: repositoryId,
           scanner: v.scanner,
           type: v.type,
@@ -818,7 +818,7 @@ async function storeVulnerabilities(
       fastify.supabase.from('vulnerabilities_iac').insert(
         byType.iac.map(v => ({
           scan_id: scanId,
-          user_id: userId,
+          user_id: workspaceId, // Note: column is user_id but value is workspaceId (migration period)
           repository_id: repositoryId,
           scanner: v.scanner,
           type: v.type,
@@ -858,7 +858,7 @@ async function storeVulnerabilities(
       fastify.supabase.from('vulnerabilities_container').insert(
         byType.container.map(v => ({
           scan_id: scanId,
-          user_id: userId,
+          user_id: workspaceId, // Note: column is user_id but value is workspaceId (migration period)
           repository_id: repositoryId,
           scanner: v.scanner,
           type: v.type,

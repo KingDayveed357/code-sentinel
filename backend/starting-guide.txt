@@ -32,5 +32,8 @@ docker compose -f docker/docker-composer.yml kill
 🧹 Verify all containers are stopped
 docker ps
 
+run ngrok
+ngrok http --hostname=collapsable-excurrent-gloria.ngrok-free.dev 127.0.0.1:8000
+
 
 If it shows no containers, everything is dead — no more Gemini logs.

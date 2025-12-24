@@ -86,4 +86,40 @@ export const onboardingApi = {
       method: "POST",
       requireAuth: true,
     }),
+
+
+    /**
+ * Import repositories during onboarding
+ * (Thin wrapper around saveRepositories for UI clarity)
+ */
+importRepositories: async (params: {
+  repositories: Array<{
+    id: number;
+    // user_id: string;
+    full_name: string;
+    default_branch?: string;
+    private: boolean;
+  }>;
+  provider?: "github" | "gitlab" | "bitbucket";
+}) => {
+  const { repositories, provider = "github" } = params;
+
+  return onboardingApi.saveRepositories(
+    repositories.map(repo => {
+      const [owner, name] = repo.full_name.split("/");
+
+      return {
+        // user_id: repo.user_id,
+        name,
+        full_name: repo.full_name,
+        owner,
+        private: repo.private,
+        url: `https://github.com/${repo.full_name}`,
+        default_branch: repo.default_branch,
+      };
+    }),
+    provider
+  );
+},
+
 };

@@ -1,8 +1,10 @@
+// frontend/app/layout.tsx
 import type React from "react";
 import type { Metadata, Viewport } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/hooks/use-auth";
+import { WorkspaceProvider } from "@/hooks/use-workspace";
 import "./globals.css";
 
 const inter = Inter({
@@ -84,8 +86,10 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <AuthProvider>
-            {children}
-            </AuthProvider>
+            <WorkspaceProvider>
+              {children}
+            </WorkspaceProvider>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>
