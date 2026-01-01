@@ -12,6 +12,10 @@ const envSchema = z.object({
     SUPABASE_SERVICE_ROLE_KEY: z.string(),
     // NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string(),
     NEXT_PUBLIC_FRONTEND_URL: z.string().url(),
+    GITHUB_APP_STATE_SECRET: z.string()
+    .min(32, "GITHUB_APP_STATE_SECRET must be at least 32 characters")
+    .optional()
+    .transform(val => val || process.env.GITHUB_APP_PRIVATE_KEY_PATH),
     // STRIPE_SECRET_KEY: z.string().optional(),
     // PAYSTACK_SECRET_KEY: z.string().optional(),
     // OPENAI_API_KEY: z.string().optional(),
@@ -24,7 +28,9 @@ const envSchema = z.object({
     RESEND_API_KEY: z.string().optional(),
     SENDGRID_API_KEY: z.string().optional(),
     WEBHOOK_BASE_URL: z.string().url().optional(),
-
+    GITHUB_APP_SLUG: z.string().optional(),
+    GITHUB_APP_ID: z.string().optional(),
+    GITHUB_APP_PRIVATE_KEY_PATH: z.string().optional(),
 });
 
 

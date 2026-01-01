@@ -20,21 +20,21 @@ import {
   ExternalLink,
 } from "lucide-react";
 import Link from "next/link";
-import { repositoriesApi } from "@/lib/api/repositories";
+import { integrationsApi, type SafeIntegration } from "@/lib/api/integrations";
+import { useWorkspace } from "@/hooks/use-workspace";
 
-interface Integration {
+interface IntegrationConfig {
   id: string;
   name: string;
   category: "source_control" | "ci_cd" | "notifications" | "artifact_registries";
   icon: any;
   description: string;
   available: boolean;
-  connected?: boolean;
-  account?: any;
 }
 
 export default function IntegrationsPage() {
-  const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const { workspace } = useWorkspace();
+  const [connectedIntegrations, setConnectedIntegrations] = useState<SafeIntegration[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,81 +47,79 @@ export default function IntegrationsPage() {
       setLoading(true);
       setError(null);
       
-      // Load actual provider status
-      const providersData = await repositoriesApi.getProviders();
-      
-      const allIntegrations: Integration[] = [
-        // Source Control
-        {
-          id: "github",
-          name: "GitHub",
-          category: "source_control",
-          icon: Github,
-          description: "Import and scan GitHub repositories",
-          available: true,
-          connected: providersData.providers.find(p => p.id === "github")?.connected || false,
-          account: providersData.providers.find(p => p.id === "github")?.account,
-        },
-        {
-          id: "gitlab",
-          name: "GitLab",
-          category: "source_control",
-          icon: GitBranch,
-          description: "Import and scan GitLab projects",
-          available: false,
-        },
-        {
-          id: "bitbucket",
-          name: "Bitbucket",
-          category: "source_control",
-          icon: GitBranch,
-          description: "Import and scan Bitbucket repositories",
-          available: false,
-        },
-        // CI/CD
-        {
-          id: "jenkins",
-          name: "Jenkins",
-          category: "ci_cd",
-          icon: Rocket,
-          description: "Integrate with Jenkins pipelines",
-          available: false,
-        },
-        // Notifications
-        {
-          id: "slack",
-          name: "Slack",
-          category: "notifications",
-          icon: MessageSquare,
-          description: "Send scan results and alerts to Slack",
-          available: false,
-        },
-        // Artifact Registries
-        {
-          id: "npm",
-          name: "NPM Registry",
-          category: "artifact_registries",
-          icon: Package,
-          description: "Scan NPM packages for vulnerabilities",
-          available: false,
-        },
-        {
-          id: "dockerhub",
-          name: "Docker Hub",
-          category: "artifact_registries",
-          icon: Container,
-          description: "Scan container images for security issues",
-          available: false,
-        },
-      ];
-      
-      setIntegrations(allIntegrations);
+      const data = await integrationsApi.getIntegrations();
+      setConnectedIntegrations(data.integrations);
     } catch (err: any) {
+      console.error('Failed to load integrations:', err);
       setError(err.message || "Failed to load integrations");
     } finally {
       setLoading(false);
     }
   };
+
+  // Define all available integrations
+  const allIntegrations: IntegrationConfig[] = [
+    // Source Control
+    {
+      id: "github",
+      name: "GitHub",
+      category: "source_control",
+      icon: Github,
+      description: "Import and scan GitHub repositories",
+      available: true,
+    },
+    {
+      id: "gitlab",
+      name: "GitLab",
+      category: "source_control",
+      icon: GitBranch,
+      description: "Import and scan GitLab projects",
+      available: false,
+    },
+    {
+      id: "bitbucket",
+      name: "Bitbucket",
+      category: "source_control",
+      icon: GitBranch,
+      description: "Import and scan Bitbucket repositories",
+      available: false,
+    },
+    // CI/CD
+    {
+      id: "jenkins",
+      name: "Jenkins",
+      category: "ci_cd",
+      icon: Rocket,
+      description: "Integrate with Jenkins pipelines",
+      available: false,
+    },
+    // Notifications
+    {
+      id: "slack",
+      name: "Slack",
+      category: "notifications",
+      icon: MessageSquare,
+      description: "Send scan results and alerts to Slack",
+      available: false,
+    },
+    // Artifact Registries
+    {
+      id: "npm",
+      name: "NPM Registry",
+      category: "artifact_registries",
+      icon: Package,
+      description: "Scan NPM packages for vulnerabilities",
+      available: false,
+    },
+    {
+      id: "dockerhub",
+      name: "Docker Hub",
+      category: "artifact_registries",
+      icon: Container,
+      description: "Scan container images for security issues",
+      available: false,
+    },
+  ];
 
   const categories = {
     source_control: {
@@ -142,6 +140,11 @@ export default function IntegrationsPage() {
     },
   };
 
+  // Helper to check if integration is connected
+  const isConnected = (integrationId: string): SafeIntegration | undefined => {
+    return connectedIntegrations.find(i => i.provider === integrationId && i.connected);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -158,6 +161,11 @@ export default function IntegrationsPage() {
         <p className="text-muted-foreground mt-1">
           Connect CodeSentinel with your development tools and workflows
         </p>
+        {workspace && (
+          <p className="text-sm text-muted-foreground mt-2">
+            Managing integrations for <span className="font-medium">{workspace.name}</span>
+          </p>
+        )}
       </div>
 
       {error && (
@@ -169,7 +177,7 @@ export default function IntegrationsPage() {
 
       {/* Integration Categories */}
       {Object.entries(categories).map(([categoryKey, category]) => {
-        const categoryIntegrations = integrations.filter(
+        const categoryIntegrations = allIntegrations.filter(
           (i) => i.category === categoryKey
         );
 
@@ -183,12 +191,14 @@ export default function IntegrationsPage() {
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {categoryIntegrations.map((integration) => {
                 const Icon = integration.icon;
+                const connected = isConnected(integration.id);
+                
                 return (
                   <Card
                     key={integration.id}
                     className={`relative transition-all ${
                       integration.available
-                        ? "hover:shadow-lg hover:-translate-y-1 cursor-pointer"
+                        ? "hover:shadow-lg hover:-translate-y-1"
                         : "opacity-60"
                     }`}
                   >
@@ -201,7 +211,7 @@ export default function IntegrationsPage() {
                           <div>
                             <CardTitle className="text-base">{integration.name}</CardTitle>
                             <div className="flex items-center gap-2 mt-1">
-                              {integration.connected ? (
+                              {connected ? (
                                 <Badge className="bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-400">
                                   <Check className="h-3 w-3 mr-1" />
                                   Connected
@@ -221,37 +231,43 @@ export default function IntegrationsPage() {
                         {integration.description}
                       </CardDescription>
 
-                      {integration.connected && integration.account && (
+                      {connected && (
                         <div className="mb-4 p-3 bg-muted rounded-lg">
                           <div className="flex items-center gap-2 text-sm">
-                            {integration.account.avatar_url && (
+                            {connected.account_avatar_url && (
                               <img
-                                src={integration.account.avatar_url}
-                                alt={integration.account.username}
+                                src={connected.account_avatar_url}
+                                alt={connected.account_login}
                                 className="w-6 h-6 rounded-full"
                               />
                             )}
-                            <span className="font-medium">@{integration.account.username}</span>
+                            <span className="font-medium">@{connected.account_login}</span>
+                            <Badge variant="secondary" className="text-xs">
+                              {connected.type}
+                            </Badge>
                           </div>
+                          {connected.connected_at && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Connected {new Date(connected.connected_at).toLocaleDateString()}
+                            </p>
+                          )}
                         </div>
                       )}
 
                       {integration.available && (
                         <div className="flex gap-2">
-                          {integration.connected ? (
-                            <>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="flex-1"
-                                asChild
-                              >
-                                <Link href={`/dashboard/integrations/${integration.id}`}>
-                                  <Settings className="mr-2 h-4 w-4" />
-                                  Settings
-                                </Link>
-                              </Button>
-                            </>
+                          {connected ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="flex-1"
+                              asChild
+                            >
+                              <Link href={`/dashboard/integrations/${integration.id}`}>
+                                <Settings className="mr-2 h-4 w-4" />
+                                Settings
+                              </Link>
+                            </Button>
                           ) : (
                             <Button
                               size="sm"

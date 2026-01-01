@@ -6,6 +6,7 @@ node_modules/
 .env
 .env.local
 .env.*
+github-private-key.pem
 
 # --- Framework specific ---
 # Next.js (Frontend)

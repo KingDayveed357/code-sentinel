@@ -1,10 +1,11 @@
-// frontend/app/layout.tsx
+// app/layout.tsx
 import type React from "react";
 import type { Metadata, Viewport } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/hooks/use-auth";
-import { WorkspaceProvider } from "@/hooks/use-workspace";
+import { ReactQueryProvider } from "@/providers/react-query-provider";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 const inter = Inter({
@@ -19,7 +20,6 @@ const geistMono = Geist_Mono({
   display: "swap",
 });
 
-// Updated metadata for CodeSentinel branding
 export const metadata: Metadata = {
   title: "CodeSentinel - AI-Powered Security Audits for Your Repositories",
   description:
@@ -59,7 +59,6 @@ export const metadata: Metadata = {
   },
 };
 
-// Viewport configuration with theme color for trust
 export const viewport: Viewport = {
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#3b4f8f" },
@@ -85,10 +84,19 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          {/* CRITICAL: AuthProvider must wrap ReactQueryProvider */}
           <AuthProvider>
-            <WorkspaceProvider>
+            {/* React Query for data fetching */}
+            <ReactQueryProvider>
               {children}
-            </WorkspaceProvider>
+              
+              {/* Toast notifications */}
+              <Toaster 
+                position="top-right" 
+                richColors 
+                closeButton
+              />
+            </ReactQueryProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>

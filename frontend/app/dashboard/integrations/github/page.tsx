@@ -12,6 +12,14 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Github,
   Search,
   Loader2,
@@ -25,6 +33,7 @@ import {
   Download,
   Star,
   GitFork,
+  AlertTriangle,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -33,16 +42,6 @@ import { integrationsApi } from "@/lib/api/integrations";
 import { useWorkspace } from "@/hooks/use-workspace";
 import type { GitHubRepository, GitHubAccount } from "@/lib/api/repositories";
 
-/**
- * GitHub Integration Page
- * 
- * Flow:
- * 1. User clicks "Connect GitHub Account" → redirects to OAuth
- * 2. OAuth completes → redirects back with token in URL
- * 3. handleOAuthCallback extracts token and calls connectGitHub API
- * 4. Integration is persisted to workspace
- * 5. Page loads repositories
- */
 export default function GitHubIntegrationPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -59,119 +58,90 @@ export default function GitHubIntegrationPage() {
   
   // UI state
   const [loading, setLoading] = useState(true);
+  const [loadingRepos, setLoadingRepos] = useState(false);
   const [importing, setImporting] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  
+  // Disconnect modal
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false);
 
   useEffect(() => {
-    handleOAuthCallback();
+    handlePageLoad();
   }, [searchParams]);
 
-  /**
-   * Handle OAuth callback or normal page load
-   * 
-   * This runs on mount and checks:
-   * 1. Are we returning from OAuth? (token in URL)
-   * 2. If yes → connect integration via API
-   * 3. If no → load existing integration status
-   */
-  const handleOAuthCallback = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      // Check for OAuth token in URL (supports both 'token' and 'access_token' params)
-      const providerToken = searchParams.get('token') || searchParams.get('access_token');
-      
-      if (providerToken) {
-        // ✅ User just completed OAuth - connect the integration
-        await connectGitHubIntegration(providerToken);
-        
-        // Clean up URL (remove sensitive token)
-        window.history.replaceState({}, '', '/dashboard/integrations/github');
-      } else {
-        // ✅ Normal page load - check existing connection
-        await loadGitHubStatus();
-      }
-    } catch (err: any) {
-      console.error('OAuth callback error:', err);
-      setError(err.message || 'Failed to complete GitHub connection');
-    } finally {
-      setLoading(false);
+  const handlePageLoad = async () => {
+    const providerToken = searchParams.get('token') || searchParams.get('access_token');
+    const installSuccess = searchParams.get('success');
+    const installError = searchParams.get('error');
+    
+    if (providerToken) {
+      // OAuth callback (personal workspace only)
+      await connectGitHubIntegration(providerToken);
+      // Clean URL
+      window.history.replaceState({}, '', '/dashboard/integrations/github');
+    } else if (installSuccess) {
+      // GitHub App installation success
+      setSuccess('GitHub App installed successfully!');
+      await loadConnectionStatus();
+      // Clean URL
+      window.history.replaceState({}, '', '/dashboard/integrations/github');
+      setTimeout(() => setSuccess(null), 5000);
+    } else if (installError) {
+      // GitHub App installation error
+      setError('Failed to install GitHub App. Please try again.');
+      await loadConnectionStatus();
+      // Clean URL
+      window.history.replaceState({}, '', '/dashboard/integrations/github');
+    } else {
+      // Normal load - check existing connection
+      await loadConnectionStatus();
     }
   };
 
-  /**
-   * Connect GitHub integration after OAuth
-   * 
-   * ✅ NEW: Uses proper API endpoint instead of manual database manipulation
-   * 
-   * This calls POST /api/integrations/github/connect which:
-   * - Validates token with GitHub
-   * - Persists integration to workspace
-   * - Updates onboarding state
-   * 
-   * @param providerToken - GitHub access token from OAuth
-   */
   const connectGitHubIntegration = async (providerToken: string) => {
     try {
       setConnecting(true);
       setError(null);
       
-      // ✅ Call the proper API endpoint
       const result = await integrationsApi.connectGitHub(providerToken);
       
       if (result.success) {
         setSuccess('GitHub connected successfully!');
-        
-        // Load the connection status and repositories
-        await loadGitHubStatus();
-        
-        // Clear success message after 3 seconds
+        await loadConnectionStatus();
         setTimeout(() => setSuccess(null), 3000);
       }
     } catch (err: any) {
       console.error('Failed to connect GitHub:', err);
-      
-      // Provide user-friendly error messages
-      if (err.message?.includes('Invalid or expired')) {
-        setError('GitHub token expired. Please try connecting again.');
-      } else if (err.message?.includes('already exists')) {
-        setError('GitHub is already connected. Refreshing...');
-        await loadGitHubStatus();
-      } else {
-        setError(err.message || 'Failed to connect GitHub integration');
-      }
+      setError(err.message || 'Failed to connect GitHub integration');
     } finally {
       setConnecting(false);
     }
   };
 
-  /**
-   * Load GitHub connection status and account info
-   * 
-   * This fetches:
-   * - Integration connection status
-   * - GitHub account details
-   * - Repository list (if connected)
-   */
-  const loadGitHubStatus = async () => {
+  const loadConnectionStatus = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      const data = await repositoriesApi.getProviders();
-      const github = data.providers.find(p => p.id === "github");
+      // Check integration status
+      const status = await integrationsApi.getIntegrationStatus('github');
       
-      if (github?.connected) {
+      if (status.connected) {
         setConnected(true);
-        setAccount(github.account || null);
+        setAccount({
+          username: status.account!.username,
+          avatar_url: status.account!.avatar_url,
+          name: status.account!.name || null,
+          email: status.account!.email || null,
+          public_repos: 0,
+        });
         
-        // Load repositories in background (don't block UI)
+        // Load repositories in background
         loadRepositories().catch(err => {
           console.error('Failed to load repositories:', err);
-          // Don't set error - connection is still valid
         });
       } else {
         setConnected(false);
@@ -179,73 +149,88 @@ export default function GitHubIntegrationPage() {
         setRepositories([]);
       }
     } catch (err: any) {
-      console.error('Failed to load GitHub status:', err);
+      console.error('Failed to load connection status:', err);
       setError(err.message || "Failed to load GitHub status");
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Load GitHub repositories
-   * 
-   * Fetches user's repositories from GitHub API via backend
-   */
   const loadRepositories = async () => {
     try {
+      setLoadingRepos(true);
       const data = await repositoriesApi.getGitHubRepos();
       setRepositories(data.repositories || []);
+      
+      // Update account repo count
+      if (account) {
+        setAccount(prev => prev ? { ...prev, public_repos: data.repositories?.length || 0 } : null);
+      }
     } catch (err: any) {
       console.error('Failed to load repositories:', err);
       
-      // Handle specific error cases
       if (err.message?.includes('not connected')) {
-        // Integration not found - user needs to connect
         setConnected(false);
         setAccount(null);
       } else if (err.message?.includes('expired')) {
-        // Token expired - show reconnect prompt
         setError('GitHub token expired. Please reconnect your account.');
         setConnected(false);
       } else {
         setError(err.message || "Failed to load GitHub repositories");
       }
       
-      throw err; // Re-throw for caller to handle
+      throw err;
+    } finally {
+      setLoadingRepos(false);
     }
   };
 
   /**
-   * Initiate GitHub OAuth flow
+   * 🚨 CRITICAL FIX: Workspace-aware GitHub connection
    * 
-   * Redirects user to backend OAuth endpoint which:
-   * 1. Redirects to GitHub authorization
-   * 2. GitHub redirects back to backend callback
-   * 3. Backend redirects back to this page with token
+   * Personal workspace → OAuth flow
+   * Team workspace → GitHub App installation
    */
-  const handleConnect = () => {
-   if (!workspace) return;
-
-   const params = new URLSearchParams({
-    workspace_id: workspace.id,
-    return_to: "/dashboard/integrations/github",
-   });
-    // Redirect to GitHub OAuth
-    window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/auth/github?${params.toString()}`;
-  };
-
-  /**
-   * Disconnect GitHub integration
-   * 
-   * Removes integration from workspace but preserves imported projects
-   */
-  const handleDisconnect = async () => {
-    if (!confirm('Are you sure you want to disconnect GitHub? This will not delete your imported projects.')) {
+  const handleConnect = async () => {
+    if (!workspace) {
+      setError('No workspace selected');
       return;
     }
 
     try {
-      setLoading(true);
+      setConnecting(true);
+      setError(null);
+
+      // Call backend to get appropriate connection flow
+      const result = await integrationsApi.connectGitHub();
+
+      if (result.mode === 'oauth') {
+        // Personal workspace → Redirect to OAuth
+        const params = new URLSearchParams({
+          workspace_id: workspace.id,
+          return_to: "/dashboard/integrations/github",
+        });
+        window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/auth/github?${params.toString()}`;
+      } else if (result.mode === 'github_app') {
+        if (result.status === 'already_connected') {
+          setSuccess('GitHub App already connected');
+          await loadConnectionStatus();
+        } else if (result.install_url) {
+          // Team workspace → Redirect to GitHub App installation
+          window.location.href = result.install_url;
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to initiate connection:', err);
+      setError(err.message || 'Failed to connect GitHub');
+      setConnecting(false);
+    }
+    // Don't set connecting to false - we're redirecting
+  };
+
+  const handleDisconnect = async () => {
+    try {
+      setDisconnecting(true);
       setError(null);
       
       const result = await integrationsApi.disconnectIntegration('github');
@@ -256,8 +241,9 @@ export default function GitHubIntegrationPage() {
         setAccount(null);
         setRepositories([]);
         setSelectedRepos(new Set());
+        setShowDisconnectModal(false);
         
-        // If requires sign out (e.g., last auth method), redirect
+        // If requires sign out (personal workspace only auth method)
         if (result.requiresSignOut) {
           setTimeout(() => {
             window.location.href = '/auth/signin';
@@ -268,15 +254,10 @@ export default function GitHubIntegrationPage() {
       console.error('Failed to disconnect GitHub:', err);
       setError(err.message || 'Failed to disconnect GitHub');
     } finally {
-      setLoading(false);
+      setDisconnecting(false);
     }
   };
 
-  /**
-   * Import selected repositories
-   * 
-   * Creates projects from selected GitHub repositories
-   */
   const handleImport = async () => {
     if (selectedRepos.size === 0) return;
     
@@ -284,7 +265,6 @@ export default function GitHubIntegrationPage() {
       setImporting(true);
       setError(null);
       
-      // Map selected repos to import format
       const reposToImport = repositories
         .filter(r => selectedRepos.has(r.full_name))
         .map(r => ({
@@ -304,10 +284,8 @@ export default function GitHubIntegrationPage() {
         setSuccess(`Successfully imported ${count} ${count === 1 ? 'repository' : 'repositories'}`);
         setSelectedRepos(new Set());
         
-        // Reload repositories to update "already_imported" status
         await loadRepositories();
         
-        // Navigate to projects after short delay
         setTimeout(() => {
           router.push("/dashboard/projects");
         }, 2000);
@@ -320,9 +298,6 @@ export default function GitHubIntegrationPage() {
     }
   };
 
-  /**
-   * Toggle repository selection
-   */
   const toggleRepo = (repoFullName: string) => {
     const newSelected = new Set(selectedRepos);
     if (newSelected.has(repoFullName)) {
@@ -333,16 +308,12 @@ export default function GitHubIntegrationPage() {
     setSelectedRepos(newSelected);
   };
 
-  /**
-   * Filter repositories by search query
-   */
   const filteredRepos = repositories.filter(repo => 
     repo.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     repo.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     repo.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Loading state
   if (loading || connecting) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
@@ -378,7 +349,6 @@ export default function GitHubIntegrationPage() {
         </div>
       </div>
 
-      {/* Workspace Context Banner */}
       {workspace && (
         <Alert>
           <Info className="h-4 w-4" />
@@ -389,7 +359,6 @@ export default function GitHubIntegrationPage() {
         </Alert>
       )}
 
-      {/* Error Alert */}
       {error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -397,7 +366,6 @@ export default function GitHubIntegrationPage() {
         </Alert>
       )}
 
-      {/* Success Alert */}
       {success && (
         <Alert className="border-green-500 bg-green-50 dark:bg-green-950/20">
           <Check className="h-4 w-4 text-green-600" />
@@ -407,41 +375,91 @@ export default function GitHubIntegrationPage() {
         </Alert>
       )}
 
-      {/* Connection Status */}
       {!connected ? (
         <Card>
           <CardHeader>
-            <CardTitle>Connect Your GitHub Account</CardTitle>
+            <CardTitle>
+              {workspace?.type === 'personal' 
+                ? 'Connect Your GitHub Account' 
+                : 'Install GitHub App'}
+            </CardTitle>
             <CardDescription>
-              Authorize CodeSentinel to access your GitHub repositories
+              {workspace?.type === 'personal'
+                ? 'Authorize CodeSentinel to access your GitHub repositories'
+                : 'Install the CodeSentinel GitHub App on your organization'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2 text-sm">
-              <p className="font-medium">This integration will allow CodeSentinel to:</p>
-              <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
-                <li>Read your repository code for security scanning</li>
-                <li>Access repository metadata and settings</li>
-                <li>Create issues and pull requests (optional)</li>
-              </ul>
-            </div>
-            
-            <Alert>
-              <Info className="h-4 w-4" />
-              <AlertDescription className="text-xs">
-                We only request read-only access. Your code stays secure on GitHub.
-              </AlertDescription>
-            </Alert>
-            
-            <Button onClick={handleConnect} size="lg" className="w-full">
-              <Github className="mr-2 h-5 w-5" />
-              Connect GitHub Account
-            </Button>
+            {workspace?.type === 'personal' ? (
+              <>
+                <div className="space-y-2 text-sm">
+                  <p className="font-medium">This integration will allow CodeSentinel to:</p>
+                  <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
+                    <li>Read your repository code for security scanning</li>
+                    <li>Access repository metadata and settings</li>
+                    <li>Create issues and pull requests (optional)</li>
+                  </ul>
+                </div>
+                
+                <Alert>
+                  <Info className="h-4 w-4" />
+                  <AlertDescription className="text-xs">
+                    We only request read-only access. Your code stays secure on GitHub.
+                  </AlertDescription>
+                </Alert>
+                
+                <Button onClick={handleConnect} size="lg" className="w-full" disabled={connecting}>
+                  {connecting ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      Connecting...
+                    </>
+                  ) : (
+                    <>
+                      <Github className="mr-2 h-5 w-5" />
+                      Connect GitHub Account
+                    </>
+                  )}
+                </Button>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2 text-sm">
+                  <p className="font-medium">Installing the GitHub App will allow CodeSentinel to:</p>
+                  <ul className="list-disc list-inside space-y-1 text-muted-foreground ml-2">
+                    <li>Access repositories in your organization</li>
+                    <li>Scan code for security vulnerabilities</li>
+                    <li>Create issues and pull requests</li>
+                    <li>Receive webhooks for automatic scanning</li>
+                  </ul>
+                </div>
+                
+                <Alert>
+                  <Info className="h-4 w-4" />
+                  <AlertDescription className="text-xs">
+                    You can choose which repositories the app has access to during installation.
+                  </AlertDescription>
+                </Alert>
+                
+                <Button onClick={handleConnect} size="lg" className="w-full" disabled={connecting}>
+                  {connecting ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <Github className="mr-2 h-5 w-5" />
+                      Install GitHub App
+                    </>
+                  )}
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
       ) : (
         <>
-          {/* Connected Account */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -501,21 +519,10 @@ export default function GitHubIntegrationPage() {
                   </div>
                   <Switch />
                 </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Create GitHub Issues</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Automatically create issues for vulnerabilities
-                    </p>
-                  </div>
-                  <Switch />
-                </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Import Repositories */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -529,15 +536,14 @@ export default function GitHubIntegrationPage() {
                   variant="outline"
                   size="sm"
                   onClick={loadRepositories}
-                  disabled={loading}
+                  disabled={loadingRepos}
                 >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`h-4 w-4 mr-2 ${loadingRepos ? 'animate-spin' : ''}`} />
                   Refresh
                 </Button>
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Search */}
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -548,7 +554,6 @@ export default function GitHubIntegrationPage() {
                 />
               </div>
 
-              {/* Stats */}
               <div className="flex items-center gap-4 text-sm text-muted-foreground">
                 <span>{filteredRepos.length} repositories</span>
                 {selectedRepos.size > 0 && (
@@ -556,78 +561,100 @@ export default function GitHubIntegrationPage() {
                 )}
               </div>
 
-              {/* Repository List */}
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                {filteredRepos.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <p>No repositories found</p>
-                  </div>
-                ) : (
-                  filteredRepos.map((repo) => (
-                    <label
-                      key={repo.full_name}
-                      className={`flex items-center gap-3 p-4 border rounded-lg cursor-pointer transition-colors ${
-                        selectedRepos.has(repo.full_name)
-                          ? "bg-primary/5 border-primary"
-                          : "hover:bg-muted/50"
-                      } ${repo.already_imported ? "opacity-50 cursor-not-allowed" : ""}`}
+              {/* Premium Skeleton Loader */}
+              {loadingRepos ? (
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                  {[...Array(5)].map((_, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-3 p-4 border rounded-lg animate-pulse"
                     >
-                      <Checkbox
-                        checked={selectedRepos.has(repo.full_name)}
-                        onCheckedChange={() => toggleRepo(repo.full_name)}
-                        disabled={repo.already_imported}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="font-medium truncate">{repo.name}</p>
-                          {repo.private ? (
-                            <Lock className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                          ) : (
-                            <Globe className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                          )}
-                          {repo.language && (
-                            <Badge variant="secondary" className="text-xs">
-                              {repo.language}
-                            </Badge>
-                          )}
+                      <div className="w-4 h-4 bg-muted rounded" />
+                      <div className="flex-1 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <div className="h-4 bg-muted rounded w-32" />
+                          <div className="h-3 bg-muted rounded w-12" />
+                          <div className="h-5 bg-muted rounded w-16" />
                         </div>
-                        <p className="text-sm text-muted-foreground truncate">
-                          {repo.full_name}
-                        </p>
-                        {repo.description && (
-                          <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
-                            {repo.description}
-                          </p>
-                        )}
-                        
-                        {/* Stars and Forks */}
-                        {((repo.stars !== undefined && repo.stars > 0) || 
-                          (repo.forks !== undefined && repo.forks > 0)) && (
-                          <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                            {repo.stars !== undefined && repo.stars > 0 && (
-                              <span className="flex items-center gap-1">
-                                <Star className="h-3 w-3" />
-                                {repo.stars}
-                              </span>
+                        <div className="h-3 bg-muted rounded w-48" />
+                        <div className="flex items-center gap-3">
+                          <div className="h-3 bg-muted rounded w-12" />
+                          <div className="h-3 bg-muted rounded w-12" />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                  {filteredRepos.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <p>No repositories found</p>
+                    </div>
+                  ) : (
+                    filteredRepos.map((repo) => (
+                      <label
+                        key={repo.full_name}
+                        className={`flex items-center gap-3 p-4 border rounded-lg cursor-pointer transition-colors ${
+                          selectedRepos.has(repo.full_name)
+                            ? "bg-primary/5 border-primary"
+                            : "hover:bg-muted/50"
+                        } ${repo.already_imported ? "opacity-50 cursor-not-allowed" : ""}`}
+                      >
+                        <Checkbox
+                          checked={selectedRepos.has(repo.full_name)}
+                          onCheckedChange={() => toggleRepo(repo.full_name)}
+                          disabled={repo.already_imported}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="font-medium truncate">{repo.name}</p>
+                            {repo.private ? (
+                              <Lock className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                            ) : (
+                              <Globe className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                             )}
-                            {repo.forks !== undefined && repo.forks > 0 && (
-                              <span className="flex items-center gap-1">
-                                <GitFork className="h-3 w-3" />
-                                {repo.forks}
-                              </span>
+                            {repo.language && (
+                              <Badge variant="secondary" className="text-xs">
+                                {repo.language}
+                              </Badge>
                             )}
                           </div>
+                          <p className="text-sm text-muted-foreground truncate">
+                            {repo.full_name}
+                          </p>
+                          {repo.description && (
+                            <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                              {repo.description}
+                            </p>
+                          )}
+                          
+                          {((repo.stars > 0) || (repo.forks > 0)) && (
+                            <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                              {repo.stars > 0 && (
+                                <span className="flex items-center gap-1">
+                                  <Star className="h-3 w-3" />
+                                  {repo.stars}
+                                </span>
+                              )}
+                              {repo.forks > 0 && (
+                                <span className="flex items-center gap-1">
+                                  <GitFork className="h-3 w-3" />
+                                  {repo.forks}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        {repo.already_imported && (
+                          <Badge variant="secondary">Already Imported</Badge>
                         )}
-                      </div>
-                      {repo.already_imported && (
-                        <Badge variant="secondary">Already Imported</Badge>
-                      )}
-                    </label>
-                  ))
-                )}
-              </div>
+                      </label>
+                    ))
+                  )}
+                </div>
+              )}
 
-              {/* Import Button */}
               <div className="flex gap-3 pt-4">
                 <Button
                   onClick={handleImport}
@@ -655,36 +682,99 @@ export default function GitHubIntegrationPage() {
             <CardHeader>
               <CardTitle className="text-destructive">Disconnect GitHub</CardTitle>
               <CardDescription>
-                Remove GitHub integration and stop syncing repositories
+                Remove GitHub integration from this workspace
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <Alert>
                 <Info className="h-4 w-4" />
                 <AlertDescription className="text-xs">
-                  Disconnecting will not delete your imported projects, but will stop automatic syncing and webhooks.
+                  Disconnecting will not delete your imported projects, but will stop automatic syncing.
                   {workspace?.type === 'team' && ' This will affect all team members.'}
                 </AlertDescription>
               </Alert>
               
               <Button 
                 variant="destructive" 
-                onClick={handleDisconnect}
-                disabled={loading}
+                onClick={() => setShowDisconnectModal(true)}
+                disabled={disconnecting}
               >
-                {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Disconnecting...
-                  </>
-                ) : (
-                  'Disconnect GitHub'
-                )}
+                Disconnect GitHub
               </Button>
             </CardContent>
           </Card>
         </>
       )}
+
+      {/* Disconnect Confirmation Modal */}
+      <Dialog open={showDisconnectModal} onOpenChange={setShowDisconnectModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Disconnect GitHub Integration?
+            </DialogTitle>
+            <DialogDescription className="space-y-2 pt-4">
+              <p>
+                This will disconnect GitHub from <strong>{workspace?.name}</strong>.
+              </p>
+              
+              {workspace?.type === 'personal' ? (
+                <div className="space-y-2 text-sm">
+                  <p className="font-medium">What happens next:</p>
+                  <ul className="list-disc list-inside space-y-1 ml-2">
+                    <li>Your imported projects will remain intact</li>
+                    <li>You won't be able to import new repositories</li>
+                    <li>Automatic scanning will be disabled</li>
+                    <li>You can reconnect at any time</li>
+                  </ul>
+                </div>
+              ) : (
+                <div className="space-y-2 text-sm">
+                  <p className="font-medium">What happens next:</p>
+                  <ul className="list-disc list-inside space-y-1 ml-2">
+                    <li>The GitHub App will be uninstalled</li>
+                    <li>All team members will lose access</li>
+                    <li>Imported projects will remain intact</li>
+                    <li>Automatic scanning will be disabled</li>
+                    <li>A team admin can reinstall the app</li>
+                  </ul>
+                </div>
+              )}
+              
+              <Alert variant="destructive" className="mt-4">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="text-xs">
+                  This action cannot be undone. You'll need to reconnect to restore access.
+                </AlertDescription>
+              </Alert>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowDisconnectModal(false)}
+              disabled={disconnecting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+            >
+              {disconnecting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Disconnecting...
+                </>
+              ) : (
+                'Disconnect GitHub'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
