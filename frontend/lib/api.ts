@@ -5,10 +5,33 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/a
 
 interface FetchOptions extends RequestInit {
   requireAuth?: boolean;
+  params?: Record<string, string | number | boolean | null | undefined>;
+}
+
+/**
+ * Get active workspace ID with priority:
+ * 1. URL query parameter (highest - current page context)
+ * 2. localStorage (fallback - last active)
+ */
+function getActiveWorkspaceId(): string | null {
+  if (typeof window === 'undefined') return null;
+  
+  // First priority: URL parameter
+  const urlParams = new URLSearchParams(window.location.search);
+  const workspaceFromUrl = urlParams.get('workspace');
+  
+  if (workspaceFromUrl) {
+    // Sync to localStorage for consistency
+    localStorage.setItem('active_workspace_id', workspaceFromUrl);
+    return workspaceFromUrl;
+  }
+  
+  // Fallback: localStorage
+  return localStorage.getItem('active_workspace_id');
 }
 
 export async function apiFetch(endpoint: string, options: FetchOptions = {}) {
-  const { requireAuth = false, headers = {}, body, ...restOptions } = options;
+  const { requireAuth = false, params = {}, headers = {}, body, ...restOptions } = options;
 
   const fetchHeaders: Record<string, string> = {};
 
@@ -23,9 +46,17 @@ export async function apiFetch(endpoint: string, options: FetchOptions = {}) {
     }
 
     fetchHeaders["Authorization"] = `Bearer ${session.access_token}`;
-    const activeWorkspaceId = localStorage.getItem('active_workspace_id');
+    
+    // Add workspace context
+    const activeWorkspaceId = getActiveWorkspaceId();
     if (activeWorkspaceId) {
+      // Send workspace in header for backend
       fetchHeaders['X-Workspace-ID'] = activeWorkspaceId;
+      
+      // Also add as query param if not already present
+      if (!params.workspace) {
+        params.workspace = activeWorkspaceId;
+      }
     }
   }
 
@@ -37,7 +68,28 @@ export async function apiFetch(endpoint: string, options: FetchOptions = {}) {
   // Merge custom headers
   Object.assign(fetchHeaders, headers);
 
-  const url = `${API_BASE_URL}${endpoint}`;
+  // Build URL with query parameters
+  let url = `${API_BASE_URL}${endpoint}`;
+  
+  // Add query params if any
+  if (Object.keys(params).length > 0) {
+    const urlObj = new URL(url);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== null && value !== undefined) {
+        urlObj.searchParams.append(key, String(value));
+      }
+    });
+    url = urlObj.toString();
+  }
+
+  // Log requests in development
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🌐 API Request:', {
+      method: restOptions.method || 'GET',
+      endpoint,
+      workspace: params.workspace || fetchHeaders['X-Workspace-ID'],
+    });
+  }
 
   const response = await fetch(url, {
     ...restOptions,

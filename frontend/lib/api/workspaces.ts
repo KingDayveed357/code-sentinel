@@ -33,3 +33,15 @@ export const workspacesApi = {
     });
   }
 };
+
+// Type guard to ensure workspace has all required fields
+export function isValidWorkspace(workspace: any): workspace is Workspace {
+  return (
+    workspace &&
+    typeof workspace.id === 'string' &&
+    typeof workspace.name === 'string' &&
+    typeof workspace.slug === 'string' &&
+    (workspace.type === 'personal' || workspace.type === 'team') &&
+    typeof workspace.plan === 'string'
+  );
+}

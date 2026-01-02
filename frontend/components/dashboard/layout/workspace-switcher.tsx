@@ -14,59 +14,28 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, User, ChevronDown, Loader2, Plus, Check } from "lucide-react";
+import { Building2, User, ChevronDown, Loader2, Check, Plus } from "lucide-react";
 import Link from "next/link";
 
 export function WorkspaceSwitcher() {
   const { 
     workspace, 
     workspaces, 
-    loading, 
-    initializing, 
-    switchWorkspace,
-    isPersonalWorkspace 
+    isSwitching,
+    // isValidating,
+    switchWorkspace 
   } = useWorkspace();
+  
   const prefetchWorkspace = usePrefetchWorkspace();
 
-  // Show skeleton during initialization
-  if (initializing) {
-    return (
-      <div className="flex items-center gap-2">
-        <Skeleton className="h-9 w-[180px]" />
-      </div>
-    );
-  }
-
-  // Show loading state
-  if (loading || !workspace) {
-    return (
-      <Button variant="outline" size="sm" disabled>
-        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-        Loading...
-      </Button>
-    );
+  // Show skeleton during initialization only
+  if (!workspace) {
+    return <Skeleton className="h-9 w-[200px]" />;
   }
 
   const personalWorkspaces = workspaces.filter((w) => w.type === "personal");
   const teamWorkspaces = workspaces.filter((w) => w.type === "team");
-
-  // Handle workspace switch with prefetching
-  const handleSwitch = async (workspaceId: string) => {
-    if (workspaceId === workspace.id) return;
-    
-    // Prefetch data before switching for instant feel
-    await prefetchWorkspace(workspaceId);
-    
-    // Switch workspace (updates URL and store)
-    await switchWorkspace(workspaceId);
-  };
-
-  // Prefetch on hover for better UX
-  const handleMouseEnter = (workspaceId: string) => {
-    if (workspaceId !== workspace.id) {
-      prefetchWorkspace(workspaceId);
-    }
-  };
+  const isLoading = isSwitching ;
 
   return (
     <DropdownMenu>
@@ -75,6 +44,7 @@ export function WorkspaceSwitcher() {
           variant="outline" 
           size="sm" 
           className="gap-2 max-w-[200px]"
+          disabled={isLoading}
         >
           {workspace.type === "personal" ? (
             <User className="h-4 w-4 flex-shrink-0" />
@@ -84,11 +54,15 @@ export function WorkspaceSwitcher() {
           <span className="truncate">{workspace.name}</span>
           <Badge
             variant="secondary"
-            className="text-xs px-1.5 py-0 hidden sm:inline-flex"
+            className="text-xs px-1.5 py-0 hidden sm:inline-flex flex-shrink-0"
           >
             {workspace.plan}
           </Badge>
-          <ChevronDown className="h-4 w-4 opacity-50 flex-shrink-0" />
+          {isLoading ? (
+            <Loader2 className="h-4 w-4 opacity-50 animate-spin flex-shrink-0" />
+          ) : (
+            <ChevronDown className="h-4 w-4 opacity-50 flex-shrink-0" />
+          )}
         </Button>
       </DropdownMenuTrigger>
       
@@ -110,19 +84,18 @@ export function WorkspaceSwitcher() {
             {personalWorkspaces.map((ws) => (
               <DropdownMenuItem
                 key={ws.id}
-                onClick={() => handleSwitch(ws.id)}
-                onMouseEnter={() => handleMouseEnter(ws.id)}
+                onClick={() => switchWorkspace(ws.id)}
+                onMouseEnter={() => prefetchWorkspace(ws.id)}
+                disabled={workspace.id === ws.id || isLoading}
                 className="flex items-center justify-between cursor-pointer"
               >
                 <div className="flex items-center gap-2 flex-1 min-w-0">
                   <User className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                   <span className="truncate">{ws.name}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  {workspace.id === ws.id && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
-                </div>
+                {workspace.id === ws.id && (
+                  <Check className="h-4 w-4 text-primary flex-shrink-0" />
+                )}
               </DropdownMenuItem>
             ))}
             {teamWorkspaces.length > 0 && <DropdownMenuSeparator />}
@@ -138,8 +111,9 @@ export function WorkspaceSwitcher() {
             {teamWorkspaces.map((ws) => (
               <DropdownMenuItem
                 key={ws.id}
-                onClick={() => handleSwitch(ws.id)}
-                onMouseEnter={() => handleMouseEnter(ws.id)}
+                onClick={() => switchWorkspace(ws.id)}
+                onMouseEnter={() => prefetchWorkspace(ws.id)}
+                disabled={workspace.id === ws.id || isLoading}
                 className="flex items-center justify-between cursor-pointer"
               >
                 <div className="flex items-center gap-2 flex-1 min-w-0">

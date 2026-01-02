@@ -1,10 +1,12 @@
 // hooks/use-workspace.ts
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { useWorkspaceStore } from '@/stores/workspace-store';
 import { workspacesApi, type Workspace } from '@/lib/api/workspaces';
+import { classifyRoute } from '@/lib/routes/route-classifier';
 import { useAuth } from './use-auth';
 import { toast } from 'sonner';
 
@@ -12,6 +14,7 @@ export function useWorkspace() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const { user } = useAuth();
 
   const {
@@ -28,6 +31,7 @@ export function useWorkspace() {
 
   // Local state for switch feedback
   const [isSwitching, setIsSwitching] = useState(false);
+  const switchInProgressRef = useRef(false);
 
   // Get workspace ID from URL query param (source of truth)
   const workspaceIdFromUrl = searchParams?.get('workspace') || null;
@@ -60,7 +64,7 @@ export function useWorkspace() {
       const allWorkspaces = response.workspaces || [];
 
       if (allWorkspaces.length === 0) {
-        console.warn('No workspaces found');
+        console.warn('⚠️  No workspaces found');
         setWorkspaces([]);
         setInitializing(false);
         return;
@@ -94,16 +98,17 @@ export function useWorkspace() {
       }
 
       if (targetWorkspace) {
+        console.log('✅ Initial workspace set:', targetWorkspace.name);
         setWorkspace(targetWorkspace);
         localStorage.setItem('active_workspace_id', targetWorkspace.id);
         
         // Sync URL if needed (without reload)
         if (!workspaceIdFromUrl || workspaceIdFromUrl !== targetWorkspace.id) {
-          updateUrlWorkspace(targetWorkspace.id, false);
+          updateUrlWorkspace(targetWorkspace.id, true);
         }
       }
     } catch (error) {
-      console.error('Failed to load workspaces:', error);
+      console.error('❌ Failed to load workspaces:', error);
       toast.error('Failed to load workspaces');
     } finally {
       setLoading(false);
@@ -111,8 +116,19 @@ export function useWorkspace() {
     }
   }, [user, workspaceIdFromUrl, reset, setWorkspaces, setWorkspace, setLoading, setInitializing, updateUrlWorkspace]);
 
-  // Switch workspace handler with instant feedback
+  // Switch workspace handler with route classification
   const switchWorkspace = useCallback(async (workspaceId: string) => {
+    // Prevent concurrent switches
+    if (switchInProgressRef.current) {
+      console.log('⏸️  Switch already in progress, ignoring');
+      return;
+    }
+
+    if (workspaceId === workspace?.id) {
+      console.log('✅ Already on this workspace');
+      return;
+    }
+
     const targetWorkspace = workspaces.find(w => w.id === workspaceId);
     
     if (!targetWorkspace) {
@@ -127,34 +143,117 @@ export function useWorkspace() {
       return;
     }
 
-    // Show immediate feedback
+    switchInProgressRef.current = true;
     setIsSwitching(true);
-    toast.loading(`Switching to ${targetWorkspace.name}...`, {
+
+    console.log('🚀 Starting workspace switch:', {
+      from: workspace?.name,
+      to: targetWorkspace.name,
+      pathname,
+    });
+
+    const toastId = toast.loading(`Switching to ${targetWorkspace.name}...`, {
       id: 'workspace-switch',
     });
 
     try {
-      // Update store immediately for instant UI feedback
+      // Step 1: Classify current route
+      const routeDef = classifyRoute(pathname);
+      console.log('📍 Route type:', routeDef.type);
+
+      // Step 2: Store previous workspace for potential rollback
+      const previousWorkspace = workspace;
+
+      // Step 3: Update store immediately for instant UI feedback
       setWorkspace(targetWorkspace);
       localStorage.setItem('active_workspace_id', workspaceId);
-      
-      // Update URL (this triggers data refetch via React Query)
-      updateUrlWorkspace(workspaceId);
-      
-      // Success feedback
+
+      // Step 4: Handle entity-dependent routes (validate or redirect)
+      if (routeDef.type === 'entity-dependent' && routeDef.requiresValidation) {
+        console.log('🔍 Validating entity access in new workspace...');
+        
+        try {
+          const isValid = await routeDef.requiresValidation(
+            pathname,
+            targetWorkspace,
+            queryClient
+          );
+
+          if (!isValid) {
+            console.log('❌ Entity not available in new workspace, redirecting...');
+            
+            // Redirect to safe route
+            const redirectTo = routeDef.redirectOnInvalid || '/dashboard';
+            const params = new URLSearchParams();
+            params.set('workspace', workspaceId);
+            
+            toast.warning('Resource not available in this workspace', {
+              id: toastId,
+              duration: 3000,
+            });
+            
+            router.push(`${redirectTo}?${params.toString()}`);
+            return; // Early return after redirect
+          }
+          
+          console.log('✅ Entity validated successfully');
+        } catch (error) {
+          console.error('❌ Validation failed:', error);
+          
+          // Redirect on validation error
+          const redirectTo = routeDef.redirectOnInvalid || '/dashboard';
+          const params = new URLSearchParams();
+          params.set('workspace', workspaceId);
+          
+          toast.warning('Could not verify resource access', {
+            id: toastId,
+            duration: 3000,
+          });
+          
+          router.push(`${redirectTo}?${params.toString()}`);
+          return;
+        }
+      }
+
+      // Step 5: Update URL with new workspace (triggers React Query refetch)
+      console.log('🔗 Updating URL with workspace parameter');
+      updateUrlWorkspace(workspaceId, true);
+
+      // Step 6: Invalidate old workspace queries
+      if (previousWorkspace) {
+        console.log('🗑️  Invalidating old workspace queries');
+        queryClient.removeQueries({
+          predicate: (query) => {
+            const key = query.queryKey;
+            return key[0] === 'workspace' && key[1] === previousWorkspace.id;
+          },
+        });
+      }
+
+      // Step 7: Force refetch for new workspace
+      console.log('♻️  Invalidating new workspace queries to force refetch');
+      queryClient.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey;
+          return key[0] === 'workspace' && key[1] === workspaceId;
+        },
+      });
+
+      console.log('✅ Workspace switch complete');
       toast.success(`Switched to ${targetWorkspace.name}`, {
-        id: 'workspace-switch',
+        id: toastId,
         duration: 2000,
       });
     } catch (error) {
-      console.error('Workspace switch error:', error);
+      console.error('❌ Workspace switch error:', error);
       toast.error('Failed to switch workspace', {
-        id: 'workspace-switch',
+        id: toastId,
       });
     } finally {
       setIsSwitching(false);
+      switchInProgressRef.current = false;
     }
-  }, [workspaces, setWorkspace, updateUrlWorkspace]);
+  }, [workspace, workspaces, pathname, setWorkspace, updateUrlWorkspace, queryClient, router]);
 
   // Refresh workspaces from API
   const refreshWorkspaces = useCallback(async () => {
@@ -168,18 +267,30 @@ export function useWorkspace() {
 
   // Sync workspace when URL changes (browser back/forward)
   useEffect(() => {
-    if (!workspaceIdFromUrl || !workspaces.length || initializing) return;
+    if (!workspaceIdFromUrl || !workspaces.length || initializing || switchInProgressRef.current) {
+      return;
+    }
 
     const urlWorkspace = workspaces.find(w => w.id === workspaceIdFromUrl);
     
     if (urlWorkspace && workspace?.id !== workspaceIdFromUrl) {
+      console.log('🔄 URL changed (browser navigation), syncing workspace:', urlWorkspace.name);
       setWorkspace(urlWorkspace);
       localStorage.setItem('active_workspace_id', urlWorkspace.id);
+      
+      // Invalidate queries for the new workspace
+      queryClient.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey;
+          return key[0] === 'workspace' && key[1] === workspaceIdFromUrl;
+        },
+      });
     } else if (!urlWorkspace && workspace) {
       // URL workspace is invalid, redirect to current workspace
+      console.warn('⚠️  Invalid workspace in URL, redirecting to current workspace');
       updateUrlWorkspace(workspace.id, true);
     }
-  }, [workspaceIdFromUrl, workspaces, workspace?.id, initializing, setWorkspace, updateUrlWorkspace]);
+  }, [workspaceIdFromUrl, workspaces, workspace?.id, initializing, setWorkspace, updateUrlWorkspace, queryClient]);
 
   // Helper to check workspace type
   const isPersonalWorkspace = useMemo(() => {

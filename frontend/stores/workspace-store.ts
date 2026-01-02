@@ -67,6 +67,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   )
 );
 
+
+
 // Selectors for optimized re-renders
 export const useCurrentWorkspace = () => 
   useWorkspaceStore((state) => state.workspace);
@@ -79,3 +81,4 @@ export const useWorkspaceLoading = () =>
 
 export const useWorkspaceInitializing = () => 
   useWorkspaceStore((state) => state.initializing);
+
