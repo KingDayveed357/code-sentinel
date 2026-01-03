@@ -24,23 +24,37 @@ export default async function entitlementsRoutes(fastify: FastifyInstance) {
 
   /**
    * GET /me/features
-   * Check specific feature access
+   * Check specific feature access or get all features for plan
    */
-  fastify.get<{ Querystring: { feature: string } }>(
+  fastify.get<{ Querystring: { feature?: string } }>(
     '/me/features',
     { preHandler },
     async (request, reply) => {
       const { plan } = request.profile!;
       const { feature } = request.query;
 
-      const hasAccess = await service.hasFeature(plan, feature);
+      // If feature is specified, check single feature
+      if (feature) {
+        const hasAccess = await service.hasFeature(plan, feature);
+
+        return reply.send({
+          success: true,
+          data: {
+            feature,
+            enabled: hasAccess,
+            plan,
+          },
+        });
+      }
+
+      // Otherwise, return all features for the plan
+      const features = await service.getPlanFeatures(plan);
 
       return reply.send({
         success: true,
         data: {
-          feature,
-          enabled: hasAccess,
           plan,
+          features,
         },
       });
     }

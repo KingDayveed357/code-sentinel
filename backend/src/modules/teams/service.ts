@@ -184,6 +184,11 @@ export class TeamService {
   /**
    * Invite user to team
    */
+ // ... existing code ...
+
+  /**
+   * Invite user to team
+   */
   async inviteMember(
     teamId: string,
     email: string,
@@ -201,6 +206,35 @@ export class TeamService {
 
     if (!inviter || (inviter.role !== 'owner' && inviter.role !== 'admin')) {
       throw this.fastify.httpErrors.forbidden('Only owners and admins can invite members');
+    }
+
+    // ✅ FIX: Check if team owner has team/enterprise plan (not the inviter)
+    const { data: team } = await this.fastify.supabase
+      .from('teams')
+      .select('owner_id')
+      .eq('id', teamId)
+      .single();
+
+    if (!team) {
+      throw this.fastify.httpErrors.notFound('Team not found');
+    }
+
+    const { data: owner } = await this.fastify.supabase
+      .from('users')
+      .select('plan')
+      .eq('id', team.owner_id)
+      .single();
+
+    if (!owner) {
+      throw this.fastify.httpErrors.notFound('Team owner not found');
+    }
+
+    // ✅ FIX: Only require team plan for the owner, not the invitee
+    const allowedPlans = ['Team', 'Enterprise'];
+    if (!allowedPlans.includes(owner.plan)) {
+      throw this.fastify.httpErrors.forbidden(
+        'Team owner must have a Team or Enterprise plan to invite members'
+      );
     }
 
     // Check if user already exists
@@ -251,6 +285,22 @@ export class TeamService {
 
     return invitation as TeamInvitation;
   }
+
+  // /**
+  //  * Accept team invitation
+  //  * ✅ FIX: Remove team plan requirement for accepting invitations
+  //  */
+  // async acceptInvitation(token: string, userId: string): Promise<{
+  //   team: Team;
+  //   member: TeamMember;
+  // }> {
+  //   // ... existing validation code ...
+    
+  //   // ✅ FIX: Don't check user's plan - they can join if owner has team plan
+  //   // The billing is handled by the team owner, not the member
+    
+  //   // ... rest of existing code ...
+  // }
 
   /**
    * Accept team invitation

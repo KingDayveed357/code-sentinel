@@ -6,6 +6,7 @@ import { useCurrentWorkspace } from '@/stores/workspace-store';
 import { dashboardApi } from '@/lib/api/dashboard';
 import { repositoriesApi } from '@/lib/api/repositories';
 import { entitlementsApi } from '@/lib/api/entitlements';
+import { integrationsApi } from '@/lib/api/integrations';
 import { useCallback } from 'react';
 
 /**
@@ -144,4 +145,46 @@ export function usePrefetchWorkspace() {
     },
     [queryClient]
   );
+}
+
+/**
+ * Hook to fetch GitHub repositories for import
+ * Workspace-aware and prevents showing stale data
+ */
+export function useGitHubRepositories() {
+  const workspace = useCurrentWorkspace();
+
+  return useQuery({
+    queryKey: workspace 
+      ? [...workspaceKeys.all(workspace.id), 'github', 'repositories'] 
+      : ['github', 'repositories', 'none'],
+    queryFn: async () => {
+      console.log('📦 Fetching GitHub repositories for workspace:', workspace?.name);
+      return repositoriesApi.getGitHubRepos();
+    },
+    enabled: !!workspace,
+    staleTime: 30 * 1000, // 30 seconds
+    refetchOnMount: 'always',
+  });
+}
+
+/**
+ * Hook to fetch GitHub integration status
+ * Workspace-aware
+ */
+export function useGitHubIntegrationStatus() {
+  const workspace = useCurrentWorkspace();
+
+  return useQuery({
+    queryKey: workspace 
+      ? [...workspaceKeys.all(workspace.id), 'github', 'integration-status'] 
+      : ['github', 'integration-status', 'none'],
+    queryFn: async () => {
+      console.log('🔌 Fetching GitHub integration status for workspace:', workspace?.name);
+      return integrationsApi.getIntegrationStatus('github');
+    },
+    enabled: !!workspace,
+    staleTime: 60 * 1000, // 1 minute
+    refetchOnMount: 'always',
+  });
 }

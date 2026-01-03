@@ -1,7 +1,8 @@
 // app/dashboard/integrations/github/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -40,25 +41,44 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { repositoriesApi } from "@/lib/api/repositories";
 import { integrationsApi } from "@/lib/api/integrations";
 import { useWorkspace } from "@/hooks/use-workspace";
+import { useGitHubRepositories, useGitHubIntegrationStatus, workspaceKeys } from "@/hooks/use-dashboard-data";
 import type { GitHubRepository, GitHubAccount } from "@/lib/api/repositories";
 
 export default function GitHubIntegrationPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { workspace } = useWorkspace();
+  const { workspace, isSwitching } = useWorkspace();
+  const queryClient = useQueryClient();
   
-  // Connection state
-  const [connected, setConnected] = useState(false);
-  const [account, setAccount] = useState<GitHubAccount | null>(null);
+  // Use workspace-aware React Query hooks
+  const {
+    data: integrationStatus,
+    isLoading: isLoadingStatus,
+    refetch: refetchStatus,
+  } = useGitHubIntegrationStatus();
   
-  // Repository state
-  const [repositories, setRepositories] = useState<GitHubRepository[]>([]);
+  const {
+    data: reposData,
+    isLoading: isLoadingRepos,
+    isFetching: isFetchingRepos,
+    refetch: refetchRepos,
+  } = useGitHubRepositories();
+  
+  // Derived state from queries
+  const connected = integrationStatus?.connected ?? false;
+  const account: GitHubAccount | null = integrationStatus?.account ? {
+    username: integrationStatus.account.username,
+    avatar_url: integrationStatus.account.avatar_url,
+    name: integrationStatus.account.name || null,
+    email: integrationStatus.account.email || null,
+    public_repos: reposData?.repositories?.length ?? 0, // Use actual count from repos data
+  } : null;
+  
+  const repositories = reposData?.repositories ?? [];
+  
+  // Local UI state
   const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
-  
-  // UI state
-  const [loading, setLoading] = useState(true);
-  const [loadingRepos, setLoadingRepos] = useState(false);
   const [importing, setImporting] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -68,11 +88,63 @@ export default function GitHubIntegrationPage() {
   // Disconnect modal
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
 
-  useEffect(() => {
-    handlePageLoad();
-  }, [searchParams]);
+  // Determine loading state - show loading when switching workspace or fetching data
+  const loading = isLoadingStatus || isSwitching;
+  const loadingRepos = isLoadingRepos || isFetchingRepos || isSwitching;
 
-  const handlePageLoad = async () => {
+  // Reset selected repos when workspace changes
+  useEffect(() => {
+    setSelectedRepos(new Set());
+  }, [workspace?.id]);
+
+  const loadConnectionStatus = useCallback(async () => {
+    try {
+      setError(null);
+      // Refetch integration status - React Query will handle the loading state
+      await refetchStatus();
+      
+      // If connected, also load repositories
+      if (integrationStatus?.connected) {
+        await refetchRepos();
+      }
+    } catch (err: any) {
+      console.error('Failed to load connection status:', err);
+      setError(err.message || "Failed to load GitHub status");
+    }
+  }, [refetchStatus, refetchRepos, integrationStatus?.connected]);
+
+  const connectGitHubIntegration = useCallback(async (providerToken: string) => {
+    if (!workspace) {
+      setError('No workspace selected');
+      return;
+    }
+    
+    try {
+      setConnecting(true);
+      setError(null);
+      
+      const result = await integrationsApi.connectGitHub(providerToken);
+      
+      if (result.success) {
+        setSuccess('GitHub connected successfully!');
+        // Invalidate queries to refetch with new connection
+        queryClient.invalidateQueries({
+          queryKey: workspaceKeys.all(workspace.id),
+        });
+        await loadConnectionStatus();
+        setTimeout(() => setSuccess(null), 3000);
+      }
+    } catch (err: any) {
+      console.error('Failed to connect GitHub:', err);
+      setError(err.message || 'Failed to connect GitHub integration');
+    } finally {
+      setConnecting(false);
+    }
+  }, [workspace, queryClient, loadConnectionStatus]);
+
+  const handlePageLoad = useCallback(async () => {
+    if (!workspace) return; // Wait for workspace to be available
+    
     const providerToken = searchParams.get('token') || searchParams.get('access_token');
     const installSuccess = searchParams.get('success');
     const installError = searchParams.get('error');
@@ -85,6 +157,10 @@ export default function GitHubIntegrationPage() {
     } else if (installSuccess) {
       // GitHub App installation success
       setSuccess('GitHub App installed successfully!');
+      // Invalidate queries to refetch with new connection
+      queryClient.invalidateQueries({
+        queryKey: workspaceKeys.all(workspace.id),
+      });
       await loadConnectionStatus();
       // Clean URL
       window.history.replaceState({}, '', '/dashboard/integrations/github');
@@ -95,95 +171,50 @@ export default function GitHubIntegrationPage() {
       await loadConnectionStatus();
       // Clean URL
       window.history.replaceState({}, '', '/dashboard/integrations/github');
-    } else {
-      // Normal load - check existing connection
-      await loadConnectionStatus();
     }
-  };
+    // Normal load - React Query will handle fetching automatically
+  }, [searchParams, workspace, queryClient, connectGitHubIntegration, loadConnectionStatus]);
 
-  const connectGitHubIntegration = async (providerToken: string) => {
+  // Handle OAuth callbacks and workspace changes
+  useEffect(() => {
+    handlePageLoad();
+  }, [handlePageLoad]); // Reload when workspace or search params change
+
+  // const loadConnectionStatus = useCallback(async () => {
+  //   try {
+  //     setError(null);
+  //     // Refetch integration status - React Query will handle the loading state
+  //     await refetchStatus();
+      
+  //     // If connected, also load repositories
+  //     if (integrationStatus?.connected) {
+  //       await refetchRepos();
+  //     }
+  //   } catch (err: any) {
+  //     console.error('Failed to load connection status:', err);
+  //     setError(err.message || "Failed to load GitHub status");
+  //   }
+  // }, [refetchStatus, refetchRepos, integrationStatus?.connected]);
+
+  const loadRepositories = useCallback(async () => {
     try {
-      setConnecting(true);
       setError(null);
-      
-      const result = await integrationsApi.connectGitHub(providerToken);
-      
-      if (result.success) {
-        setSuccess('GitHub connected successfully!');
-        await loadConnectionStatus();
-        setTimeout(() => setSuccess(null), 3000);
-      }
-    } catch (err: any) {
-      console.error('Failed to connect GitHub:', err);
-      setError(err.message || 'Failed to connect GitHub integration');
-    } finally {
-      setConnecting(false);
-    }
-  };
-
-  const loadConnectionStatus = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      // Check integration status
-      const status = await integrationsApi.getIntegrationStatus('github');
-      
-      if (status.connected) {
-        setConnected(true);
-        setAccount({
-          username: status.account!.username,
-          avatar_url: status.account!.avatar_url,
-          name: status.account!.name || null,
-          email: status.account!.email || null,
-          public_repos: 0,
-        });
-        
-        // Load repositories in background
-        loadRepositories().catch(err => {
-          console.error('Failed to load repositories:', err);
-        });
-      } else {
-        setConnected(false);
-        setAccount(null);
-        setRepositories([]);
-      }
-    } catch (err: any) {
-      console.error('Failed to load connection status:', err);
-      setError(err.message || "Failed to load GitHub status");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadRepositories = async () => {
-    try {
-      setLoadingRepos(true);
-      const data = await repositoriesApi.getGitHubRepos();
-      setRepositories(data.repositories || []);
-      
-      // Update account repo count
-      if (account) {
-        setAccount(prev => prev ? { ...prev, public_repos: data.repositories?.length || 0 } : null);
-      }
+      // Refetch repositories - React Query will handle the loading state
+      await refetchRepos();
     } catch (err: any) {
       console.error('Failed to load repositories:', err);
       
       if (err.message?.includes('not connected')) {
-        setConnected(false);
-        setAccount(null);
+        // Status will be updated by React Query
       } else if (err.message?.includes('expired')) {
         setError('GitHub token expired. Please reconnect your account.');
-        setConnected(false);
       } else {
         setError(err.message || "Failed to load GitHub repositories");
       }
       
       throw err;
-    } finally {
-      setLoadingRepos(false);
     }
-  };
+  }, [refetchRepos]);
 
   /**
    * 🚨 CRITICAL FIX: Workspace-aware GitHub connection
@@ -237,11 +268,15 @@ export default function GitHubIntegrationPage() {
       
       if (result.success) {
         setSuccess('GitHub disconnected successfully');
-        setConnected(false);
-        setAccount(null);
-        setRepositories([]);
         setSelectedRepos(new Set());
         setShowDisconnectModal(false);
+        
+        // Invalidate queries to clear cached data
+        if (workspace) {
+          queryClient.invalidateQueries({
+            queryKey: workspaceKeys.all(workspace.id),
+          });
+        }
         
         // If requires sign out (personal workspace only auth method)
         if (result.requiresSignOut) {
@@ -283,6 +318,13 @@ export default function GitHubIntegrationPage() {
         const count = result.imported;
         setSuccess(`Successfully imported ${count} ${count === 1 ? 'repository' : 'repositories'}`);
         setSelectedRepos(new Set());
+        
+        // Invalidate queries to refresh project list
+        if (workspace) {
+          queryClient.invalidateQueries({
+            queryKey: workspaceKeys.all(workspace.id),
+          });
+        }
         
         await loadRepositories();
         
@@ -489,8 +531,17 @@ export default function GitHubIntegrationPage() {
                     <p className="text-sm text-muted-foreground">@{account.username}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-2xl font-bold">{account.public_repos}</p>
-                    <p className="text-xs text-muted-foreground">repositories</p>
+                    {loadingRepos ? (
+                      <div className="flex flex-col items-end">
+                        <div className="h-8 w-12 bg-muted rounded animate-pulse mb-1" />
+                        <div className="h-3 w-16 bg-muted rounded animate-pulse" />
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-2xl font-bold">{account.public_repos}</p>
+                        <p className="text-xs text-muted-foreground">repositories</p>
+                      </>
+                    )}
                   </div>
                 </div>
               )}

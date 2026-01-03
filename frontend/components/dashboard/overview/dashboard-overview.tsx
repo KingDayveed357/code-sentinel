@@ -1,10 +1,11 @@
 // components/dashboard/dashboard-overview.tsx
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { GitBranch } from "lucide-react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { onboardingApi } from "@/lib/api/onboarding";
 import type { DashboardOverview as DashboardData } from "@/lib/api/dashboard";
@@ -19,74 +20,89 @@ import { CriticalVulnerabilitiesCard } from "./critical-vulnerabilities-card";
 import { RecentScansCard } from "./recent-scans-card";
 import { UpgradeModal } from "./upgrade-modal";
 import { useWorkspace } from "@/hooks/use-workspace";
+import { useDashboardOverview, workspaceKeys } from "@/hooks/use-dashboard-data";
 
 /**
  * Main Dashboard Overview Component with Workspace-Aware Banner
+ * Uses React Query for proper workspace-aware data fetching and cache management
  */
 export function DashboardOverview() {
-  const { workspace } = useWorkspace();
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [onboardingState, setOnboardingState] = useState<OnboardingState | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { workspace, isSwitching } = useWorkspace();
   const [userPlan, setUserPlan] = useState<string>("Free");
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showBanner, setShowBanner] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
-  // Load data when component mounts or workspace changes
-  const loadDashboardData = useCallback(async () => {
-    if (!workspace) return;
+  // Use React Query hook for workspace-aware dashboard data
+  // This automatically handles workspace switches and prevents stale data
+  const {
+    data,
+    isLoading,
+    isFetching,
+    error: queryError,
+    refetch,
+  } = useDashboardOverview();
 
-    try {
-      setLoading(true);
-      setError(null);
+  // Fetch user profile and onboarding state separately
+  const { data: userProfile } = useQuery({
+    queryKey: workspace ? [...workspaceKeys.all(workspace.id), 'user-profile'] : ['user-profile'],
+    queryFn: async () => {
+      return apiFetch("/auth/me", { requireAuth: true });
+    },
+    enabled: !!workspace,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
 
-      // Fetch all data in parallel
-      const [userProfile, overview, state] = await Promise.all([
-        apiFetch("/auth/me", { requireAuth: true }),
-        apiFetch("/dashboard/overview", { requireAuth: true }),
-        onboardingApi.getState().catch(() => null),
-      ]);
+  const { data: onboardingState } = useQuery({
+    queryKey: workspace ? [...workspaceKeys.all(workspace.id), 'onboarding'] : ['onboarding'],
+    queryFn: async () => {
+      return onboardingApi.getState();
+    },
+    enabled: !!workspace,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: false, // Don't retry if onboarding API fails
+  });
 
-      setUserPlan(userProfile?.user?.plan || workspace?.plan || "Free");
-      setData(overview);
-      setOnboardingState(state);
-
-      // Banner logic: Check per-workspace dismissal first
-      const dismissedKey = `banner_dismissed_${workspace.id}`;
-      const isLocallyDismissed = localStorage.getItem(dismissedKey) === "true";
-
-      if (isLocallyDismissed) {
-        setShowBanner(false);
-        setBannerDismissed(true);
-        return;
-      }
-
-      // Determine banner visibility
-      const repoCount = overview?.stats?.repositories_scanned || 0;
-      const skippedImport = state?.steps_skipped?.includes("import_repos");
-
-      // Show banner if:
-      // 1. Backend says should show, OR
-      // 2. No repos AND user skipped import step
-      const shouldShow =
-        state?.should_show_import_banner ||
-        (repoCount === 0 && skippedImport);
-
-      setShowBanner(shouldShow);
-      setBannerDismissed(false);
-    } catch (err: any) {
-      setError(err.message || "Failed to load dashboard data");
-    } finally {
-      setLoading(false);
-    }
-  }, [workspace?.id]);
-
-  // Reload when workspace changes
+  // Update user plan when profile loads
   useEffect(() => {
-    loadDashboardData();
-  }, [loadDashboardData]);
+    if (userProfile?.user?.plan) {
+      setUserPlan(userProfile.user.plan);
+    } else if (workspace?.plan) {
+      setUserPlan(workspace.plan);
+    }
+  }, [userProfile, workspace?.plan]);
+
+  // Determine banner visibility based on workspace and data
+  useEffect(() => {
+    if (!workspace || !data || isLoading) {
+      setShowBanner(false);
+      return;
+    }
+
+    // Check per-workspace dismissal first
+    const dismissedKey = `banner_dismissed_${workspace.id}`;
+    const isLocallyDismissed = localStorage.getItem(dismissedKey) === "true";
+
+    if (isLocallyDismissed) {
+      setShowBanner(false);
+      setBannerDismissed(true);
+      return;
+    }
+
+    // Determine banner visibility
+    const repoCount = data?.stats?.repositories_scanned || 0;
+    const skippedImport = onboardingState?.steps_skipped?.includes("import_repos");
+
+    // Show banner if:
+    // 1. Backend says should show, OR
+    // 2. No repos AND user skipped import step
+    const shouldShow =
+      onboardingState?.should_show_import_banner ||
+      (repoCount === 0 && skippedImport);
+
+    setShowBanner(shouldShow);
+    setBannerDismissed(false);
+  }, [workspace?.id, data, onboardingState]);
 
   const handleUpgradeRequired = useCallback(() => {
     setShowUpgradeModal(true);
@@ -103,8 +119,14 @@ export function DashboardOverview() {
     setBannerDismissed(true);
   }, [workspace?.id]);
 
+  // Determine loading state: loading OR switching workspace OR fetching new data
+  const isDataLoading = isLoading || isSwitching || (isFetching && !data);
+
+  // Get error message
+  const error = queryError ? (queryError as Error).message || "Failed to load dashboard data" : null;
+
   if (error) {
-    return <DashboardError error={error} onRetry={loadDashboardData} />;
+    return <DashboardError error={error} onRetry={() => refetch()} />;
   }
 
   const canAccessTeam = userPlan === "Team" || userPlan === "Enterprise";
@@ -113,7 +135,7 @@ export function DashboardOverview() {
     <>
       <div className="space-y-6">
         {/* Import Banner - Workspace-specific */}
-        {showBanner && !loading && !bannerDismissed && (
+        {showBanner && !isDataLoading && !bannerDismissed && workspace && (
           <ImportBanner onDismiss={handleBannerDismiss} workspace={workspace} />
         )}
 
@@ -144,8 +166,8 @@ export function DashboardOverview() {
           </Button>
         </div>
 
-        {/* Content - Show skeleton while loading */}
-        {loading ? (
+        {/* Content - Show skeleton while loading or switching workspace */}
+        {isDataLoading || !workspace ? (
           <DashboardSkeleton />
         ) : data ? (
           <>

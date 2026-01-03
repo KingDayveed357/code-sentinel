@@ -13,5 +13,5 @@ export default function DashboardLayout({
   <DashboardShell>
     {children}
     </DashboardShell>
-  </RequireOnboardingCompleted>
+   </RequireOnboardingCompleted>
 )}

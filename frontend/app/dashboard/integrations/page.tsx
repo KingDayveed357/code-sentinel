@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,7 @@ import {
 import Link from "next/link";
 import { integrationsApi, type SafeIntegration } from "@/lib/api/integrations";
 import { useWorkspace } from "@/hooks/use-workspace";
+import { workspaceKeys } from "@/hooks/use-dashboard-data";
 
 interface IntegrationConfig {
   id: string;
@@ -33,29 +35,29 @@ interface IntegrationConfig {
 }
 
 export default function IntegrationsPage() {
-  const { workspace } = useWorkspace();
-  const [connectedIntegrations, setConnectedIntegrations] = useState<SafeIntegration[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { workspace, isSwitching } = useWorkspace();
+  
+  // Use React Query for workspace-aware integrations data
+  const {
+    data: integrationsData,
+    isLoading,
+    error: queryError,
+  } = useQuery({
+    queryKey: workspace 
+      ? [...workspaceKeys.all(workspace.id), 'integrations'] 
+      : ['integrations', 'none'],
+    queryFn: async () => {
+      console.log('🔌 Fetching integrations for workspace:', workspace?.name);
+      return integrationsApi.getIntegrations();
+    },
+    enabled: !!workspace,
+    staleTime: 30 * 1000, // 30 seconds
+    refetchOnMount: 'always',
+  });
 
-  useEffect(() => {
-    loadIntegrations();
-  }, []);
-
-  const loadIntegrations = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const data = await integrationsApi.getIntegrations();
-      setConnectedIntegrations(data.integrations);
-    } catch (err: any) {
-      console.error('Failed to load integrations:', err);
-      setError(err.message || "Failed to load integrations");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const connectedIntegrations = integrationsData?.integrations ?? [];
+  const loading = isLoading || isSwitching;
+  const error = queryError ? (queryError as Error).message || "Failed to load integrations" : null;
 
   // Define all available integrations
   const allIntegrations: IntegrationConfig[] = [

@@ -78,6 +78,39 @@ export async function oauthCallbackController(
 
     const githubUser = authData.user.user_metadata;
 
+    // Check if user profile already exists to preserve onboarding state
+    const { data: existingProfile } = await fastify.supabase
+      .from("users")
+      .select("onboarding_completed, onboarding_state, plan")
+      .eq("id", userId)
+      .maybeSingle();
+
+    const isNewUser = !existingProfile;
+
+    // Preserve existing onboarding state for returning users
+    // Merge with defaults to ensure all required fields are present
+    const defaultOnboardingState = {
+      workspace_created: false,
+      github_connected: false,
+      repos_imported: false,
+      completed_at: null,
+    };
+    
+    const onboardingCompleted = existingProfile?.onboarding_completed ?? false;
+    const onboardingState = existingProfile?.onboarding_state
+      ? { ...defaultOnboardingState, ...existingProfile.onboarding_state }
+      : defaultOnboardingState;
+    const userPlan = existingProfile?.plan ?? "Free";
+
+    if (isNewUser) {
+      fastify.log.info({ userId }, "Creating new user profile");
+    } else {
+      fastify.log.info(
+        { userId, onboarding_completed: onboardingCompleted },
+        "Updating existing user profile (preserving onboarding state)"
+      );
+    }
+
     // Create or update user profile
     const { data: profile, error: profileError } = await fastify.supabase
       .from("users")
@@ -87,14 +120,9 @@ export async function oauthCallbackController(
           email: authData.user.email,
           full_name: githubUser?.full_name || githubUser?.user_name || githubUser?.name || "User",
           avatar_url: githubUser?.avatar_url,
-          plan: "Free",
-          onboarding_completed: false,
-          onboarding_state: {
-            workspace_created: false,
-            github_connected: false,
-            repos_imported: false,
-            completed_at: null,
-          },
+          plan: userPlan,
+          onboarding_completed: onboardingCompleted,
+          onboarding_state: onboardingState,
         },
         { onConflict: "id" }
       )

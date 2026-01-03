@@ -12,6 +12,7 @@ export function RequireOnboardingCompleted({
   const { user, loading, profileLoading, isOnboardingComplete } = useAuth();
   const router = useRouter();
 
+
   // Wait for both user + profile to load
   const authReady = !loading && !profileLoading;
 
@@ -22,6 +23,7 @@ export function RequireOnboardingCompleted({
       router.replace("/");
     } else if (!isOnboardingComplete) {
       window.location.href = "/onboarding";
+      console.log("isOnboardingComplete:", isOnboardingComplete);
     }
   }, [authReady, user, isOnboardingComplete, router]);
 

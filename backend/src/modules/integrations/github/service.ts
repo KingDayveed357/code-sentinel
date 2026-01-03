@@ -655,6 +655,92 @@ async function getGitHubToken(
  * 
  * ✅ FIX: Team workspaces now use installation-specific repository endpoint
  */
+// export async function fetchGitHubRepositories(
+//   fastify: FastifyInstance,
+//   workspaceId: string
+// ): Promise<GitHubRepository[]> {
+//   const integration = await getWorkspaceIntegration(fastify, workspaceId, 'github');
+
+//   if (!integration || !integration.connected) {
+//     throw fastify.httpErrors.preconditionFailed(
+//       'GitHub integration not connected. Please connect GitHub for this workspace.'
+//     );
+//   }
+
+//   try {
+//     // ✅ FIX: Team workspace uses GitHub App data service
+//     if (integration.type === 'github_app') {
+//       if (!integration.github_app_installation_id) {
+//         throw fastify.httpErrors.internalServerError('GitHub App installation ID missing');
+//       }
+
+//       // Use dedicated GitHub App repository fetcher
+//       return await fetchInstallationRepositories(
+//         fastify,
+//         integration.github_app_installation_id
+//       );
+//     }
+
+//     // Personal workspace: OAuth token (unchanged)
+//     if (integration.type === 'oauth') {
+//       if (!integration.oauth_access_token) {
+//         throw fastify.httpErrors.unauthorized('GitHub OAuth token missing');
+//       }
+
+//       const response = await fetch(
+//         'https://api.github.com/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator',
+//         {
+//           headers: {
+//             Authorization: `Bearer ${integration.oauth_access_token}`,
+//             Accept: 'application/vnd.github+json',
+//             'User-Agent': 'CodeSentinel/1.0',
+//           },
+//         }
+//       );
+
+//       if (!response.ok) {
+//         if (response.status === 401) {
+//           throw fastify.httpErrors.unauthorized(
+//             'GitHub token expired. Please reconnect your account.'
+//           );
+//         }
+//         throw new Error(`GitHub API error: ${response.status}`);
+//       }
+
+//       const repos = await response.json();
+
+//       return repos.map((repo: any) => ({
+//         id: repo.id,
+//         name: repo.name,
+//         full_name: repo.full_name,
+//         owner: repo.owner.login,
+//         private: repo.private,
+//         description: repo.description,
+//         url: repo.html_url,
+//         default_branch: repo.default_branch || 'main',
+//         updated_at: repo.updated_at,
+//         language: repo.language,
+//         stars: repo.stargazers_count || 0,
+//         forks: repo.forks_count || 0,
+//       }));
+//     }
+
+//     throw fastify.httpErrors.internalServerError('Invalid integration type');
+//   } catch (err: any) {
+//     fastify.log.error({ err, workspaceId }, 'Failed to fetch GitHub repositories');
+
+//     if (err.statusCode) {
+//       throw err;
+//     }
+
+//     throw fastify.httpErrors.internalServerError(
+//       'Failed to fetch repositories from GitHub. Please try again.'
+//     );
+//   }
+// }
+
+// ... existing code ...
+
 export async function fetchGitHubRepositories(
   fastify: FastifyInstance,
   workspaceId: string
@@ -700,6 +786,12 @@ export async function fetchGitHubRepositories(
 
       if (!response.ok) {
         if (response.status === 401) {
+          // ✅ FIX: Mark integration as disconnected when token expires
+          await fastify.supabase
+            .from('workspace_integrations')
+            .update({ connected: false, oauth_access_token: null })
+            .eq('id', integration.id);
+          
           throw fastify.httpErrors.unauthorized(
             'GitHub token expired. Please reconnect your account.'
           );

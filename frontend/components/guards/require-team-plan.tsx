@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Shield, Zap, Users, Check, ArrowRight, Lock } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { entitlementsApi, type PlanFeatures, type Entitlements } from "@/lib/api/entitlements";
 
 export function RequireTeamPlan({
   children,
@@ -17,9 +20,39 @@ export function RequireTeamPlan({
   upgradeMessage?: string;
 }) {
   const { user, loading, canAccessTeam } = useAuth();
+  const pathname = usePathname();
+  const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
+  const [planFeatures, setPlanFeatures] = useState<PlanFeatures | null>(null);
+  const [featuresLoading, setFeaturesLoading] = useState(true);
+
+  // Check if we're on an invite route - allow access without team plan
+  const isInviteRoute = pathname?.includes("/teams/invite/");
+
+  // Fetch entitlements and plan features
+  useEffect(() => {
+    if (!user || loading) return;
+
+    async function fetchData() {
+      try {
+        setFeaturesLoading(true);
+        const [entitlementsData, featuresData] = await Promise.all([
+          entitlementsApi.getEntitlements(),
+          entitlementsApi.getPlanFeatures(),
+        ]);
+        setEntitlements(entitlementsData);
+        setPlanFeatures(featuresData);
+      } catch (error) {
+        console.error("Failed to fetch entitlements:", error);
+      } finally {
+        setFeaturesLoading(false);
+      }
+    }
+
+    fetchData();
+  }, [user, loading]);
 
   // Show loading state
-  if (loading) {
+  if (loading || featuresLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -27,8 +60,26 @@ export function RequireTeamPlan({
     );
   }
 
+  // Allow invite routes to bypass team plan requirement
+  if (isInviteRoute) {
+    return <>{children}</>;
+  }
+
   // Show upgrade prompt for users without team access
   if (!user || !canAccessTeam) {
+    const currentPlan = entitlements?.plan || user?.plan || "Free";
+    const planDisplayName = currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1).toLowerCase();
+    
+    // Get enabled features for current plan
+    const enabledFeatures = planFeatures?.features
+      .filter((f: { feature: string; enabled: boolean }) => f.enabled)
+      .map((f: { feature: string; enabled: boolean }) => f.feature) || [];
+    
+    // Get disabled features (team features)
+    const disabledFeatures = planFeatures?.features
+      .filter((f: { feature: string; enabled: boolean }) => !f.enabled)
+      .map((f: { feature: string; enabled: boolean }) => f.feature) || [];
+
     return (
       <div className="space-y-8 max-w-5xl mx-auto">
         {/* Hero Section */}
@@ -62,33 +113,89 @@ export function RequireTeamPlan({
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-lg">Your Current Plan</h3>
-                  <Badge variant="outline">Free</Badge>
+                  <Badge variant="outline">{planDisplayName}</Badge>
                 </div>
                 <ul className="space-y-3">
-                  <li className="flex items-start gap-2">
-                    <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
-                    <span className="text-sm">Up to 3 repositories</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
-                    <span className="text-sm">10 scans per month</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
-                    <span className="text-sm">Basic vulnerability detection</span>
-                  </li>
-                  <li className="flex items-start gap-2 opacity-50">
-                    <Lock className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
-                    <span className="text-sm line-through">Team collaboration</span>
-                  </li>
-                  <li className="flex items-start gap-2 opacity-50">
-                    <Lock className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
-                    <span className="text-sm line-through">Team member management</span>
-                  </li>
-                  <li className="flex items-start gap-2 opacity-50">
-                    <Lock className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
-                    <span className="text-sm line-through">Role-based permissions</span>
-                  </li>
+                  {/* Show plan limits from entitlements */}
+                  {entitlements && (
+                    <>
+                      {entitlements.limits.repositories !== null && (
+                        <li className="flex items-start gap-2">
+                          <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                          <span className="text-sm">
+                            {entitlements.limits.repositories === 100 ? "Up to 100 repositories" : 
+                             entitlements.limits.repositories === 20 ? "Up to 20 repositories" :
+                             entitlements.limits.repositories === 5 ? "Up to 5 repositories" :
+                             `${entitlements.limits.repositories} repositories`}
+                          </span>
+                        </li>
+                      )}
+                      {entitlements.limits.scans_per_month !== null && (
+                        <li className="flex items-start gap-2">
+                          <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                          <span className="text-sm">
+                            {entitlements.limits.scans_per_month} scans per month
+                          </span>
+                        </li>
+                      )}
+                      {entitlements.limits.scans_per_month === null && (
+                        <li className="flex items-start gap-2">
+                          <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                          <span className="text-sm">Unlimited scans</span>
+                        </li>
+                      )}
+                      <li className="flex items-start gap-2">
+                        <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                        <span className="text-sm">
+                          {entitlements.limits.concurrent_scans} concurrent scan{entitlements.limits.concurrent_scans !== 1 ? 's' : ''}
+                        </span>
+                      </li>
+                    </>
+                  )}
+                  {/* Show enabled features from plan_entitlements */}
+                  {enabledFeatures.length > 0 && enabledFeatures.map((feature: string) => (
+                    <li key={feature} className="flex items-start gap-2">
+                      <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                      <span className="text-sm capitalize">
+                        {feature.replace(/_/g, ' ')}
+                      </span>
+                    </li>
+                  ))}
+                  {/* Show disabled team features */}
+                  {disabledFeatures.filter((f: string) => 
+                    f.includes('team') || 
+                    f.includes('collaboration') || 
+                    f.includes('member') || 
+                    f.includes('role')
+                  ).map((feature: string) => (
+                    <li key={feature} className="flex items-start gap-2 opacity-50">
+                      <Lock className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                      <span className="text-sm line-through capitalize">
+                        {feature.replace(/_/g, ' ')}
+                      </span>
+                    </li>
+                  ))}
+                  {/* Fallback if no features loaded */}
+                  {enabledFeatures.length === 0 && !entitlements && (
+                    <>
+                      <li className="flex items-start gap-2">
+                        <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                        <span className="text-sm">Basic vulnerability detection</span>
+                      </li>
+                      <li className="flex items-start gap-2 opacity-50">
+                        <Lock className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                        <span className="text-sm line-through">Team collaboration</span>
+                      </li>
+                      <li className="flex items-start gap-2 opacity-50">
+                        <Lock className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                        <span className="text-sm line-through">Team member management</span>
+                      </li>
+                      <li className="flex items-start gap-2 opacity-50">
+                        <Lock className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                        <span className="text-sm line-through">Role-based permissions</span>
+                      </li>
+                    </>
+                  )}
                 </ul>
               </div>
 

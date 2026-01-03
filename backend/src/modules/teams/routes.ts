@@ -23,7 +23,7 @@ export default async function teamsRoutes(fastify: FastifyInstance) {
     requireAuth,
     requireProfile,
     requireOnboardingCompleted,
-    requireTeamPlan, // Require Team or Enterprise plan
+    requireTeamPlan, 
   ];
 
   const teamPreHandler = [...basePreHandler, requireTeam];
@@ -63,7 +63,14 @@ export default async function teamsRoutes(fastify: FastifyInstance) {
   /**
    * POST /api/teams/invitations/:token/accept - Accept invitation
    */
-  fastify.post('/invitations/:token/accept', { preHandler: basePreHandler }, (req, reply) =>
+  fastify.post('/invitations/:token/accept', { preHandler: [
+    verifyAuth,
+    loadProfile,
+    requireAuth,
+    requireProfile,
+    requireOnboardingCompleted,
+
+  ] }, (req, reply) =>
     controller.acceptInvitation(req, reply)
   );
 

@@ -249,6 +249,22 @@ export class EntitlementsService {
     return data?.enabled || false;
   }
 
+  /**
+   * Get all features for a plan
+   */
+  async getPlanFeatures(plan: string): Promise<Array<{ feature: string; enabled: boolean }>> {
+    const { data, error } = await this.fastify.supabase
+      .from('plan_entitlements')
+      .select('feature, enabled')
+      .eq('plan', plan);
+
+    if (error) {
+      throw error;
+    }
+
+    return data || [];
+  }
+
   private getCurrentPeriod() {
     const now = new Date();
     return {

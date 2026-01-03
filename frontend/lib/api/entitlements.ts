@@ -39,6 +39,11 @@ export interface FeatureAccess {
   plan: string;
 }
 
+export interface PlanFeatures {
+  plan: string;
+  features: Array<{ feature: string; enabled: boolean }>;
+}
+
 export const entitlementsApi = {
   getEntitlements: async (): Promise<Entitlements> => {
     const response = await apiFetch("/me/entitlements", {
@@ -52,6 +57,13 @@ export const entitlementsApi = {
       `/me/features?feature=${encodeURIComponent(feature)}`,
       { requireAuth: true }
     );
+    return response.data;
+  },
+
+  getPlanFeatures: async (): Promise<PlanFeatures> => {
+    const response = await apiFetch("/me/features", {
+      requireAuth: true,
+    });
     return response.data;
   },
 
