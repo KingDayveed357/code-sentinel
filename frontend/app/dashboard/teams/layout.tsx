@@ -1,15 +1,12 @@
 "use client";
 
-import { RequireTeamPlan } from "@/components/guards/require-team-plan";
+// Note: Removed RequireTeamPlan - billing is team-scoped, not user-scoped
+// Non-owners can access teams they're invited to without a paid plan
 
 export default function TeamsLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <RequireTeamPlan>
-      {children}
-    </RequireTeamPlan>
-  );
+  return <>{children}</>;
 }

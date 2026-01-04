@@ -44,12 +44,22 @@ export async function requireTeam(request: FastifyRequest, reply: FastifyReply) 
     throw request.server.httpErrors.forbidden('You are not a member of this team');
   }
 
+  // Get team subscription status (for owner-only billing checks)
+  const { data: team } = await request.server.supabase
+    .from('teams')
+    .select('id, owner_id, subscription_status')
+    .eq('id', teamId)
+    .single();
+
   // Attach to request
   request.team = {
     id: teamId,
     role: member.role as TeamRole,
     isOwner: (member.teams as any).owner_id === request.profile.id,
   };
+
+  // Store subscription status for billing checks
+  (request.team as any).subscriptionStatus = team?.subscription_status || null;
 }
 
 /**

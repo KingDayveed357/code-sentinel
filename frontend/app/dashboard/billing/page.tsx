@@ -5,12 +5,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { CreditCard, Check, Zap, Database, Activity, TrendingUp, Shield, Infinity, RefreshCw, AlertCircle } from "lucide-react"
+import { CreditCard, Check, Zap, Database, Activity, TrendingUp, Shield, Infinity, RefreshCw, AlertCircle, Info } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
 import { useEntitlements } from "@/hooks/use-entitlements"
+import { useWorkspace } from "@/hooks/use-workspace"
 
 export default function BillingPage() {
   const { user } = useAuth()
+  const { workspace, isTeamWorkspace } = useWorkspace()
   const { 
     entitlements, 
     loading, 
@@ -126,8 +128,23 @@ export default function BillingPage() {
           <CreditCard className="h-8 w-8 text-primary" />
           Billing & Subscription
         </h1>
-        <p className="text-muted-foreground">Manage your subscription and billing information</p>
+        <p className="text-muted-foreground">
+          {isTeamWorkspace 
+            ? "Billing is handled by the team owner" 
+            : "Manage your subscription and billing information"}
+        </p>
       </div>
+
+      {/* Team Workspace Message */}
+      {isTeamWorkspace && (
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertDescription>
+            You're currently in a team workspace. Billing and subscription management is handled by the team owner. 
+            Switch to your personal workspace to manage your own billing.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Error State */}
       {error && (
@@ -148,7 +165,7 @@ export default function BillingPage() {
       )}
 
       {/* Current Usage Card */}
-      {!loading && entitlements && (
+      {!loading && entitlements && !isTeamWorkspace && (
         <Card className="border-primary">
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -295,9 +312,10 @@ export default function BillingPage() {
         </Card>
       )}
 
-      {/* Plans Grid */}
-      <div>
-        <h2 className="text-2xl font-bold mb-6">Choose Your Plan</h2>
+      {/* Plans Grid - Only show in personal workspace */}
+      {!isTeamWorkspace && (
+        <div>
+          <h2 className="text-2xl font-bold mb-6">Choose Your Plan</h2>
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
           {plans.map((plan) => (
             <Card
@@ -334,9 +352,11 @@ export default function BillingPage() {
           ))}
         </div>
       </div>
+      )}
 
-      {/* Payment Method */}
-      <Card>
+      {/* Payment Method - Only show in personal workspace */}
+      {!isTeamWorkspace && (
+        <Card>
         <CardHeader>
           <CardTitle>Payment Method</CardTitle>
           <CardDescription>Manage your billing information</CardDescription>
@@ -359,9 +379,11 @@ export default function BillingPage() {
           </Button>
         </CardContent>
       </Card>
+      )}
 
-      {/* Payment History */}
-      <Card>
+      {/* Payment History - Only show in personal workspace */}
+      {!isTeamWorkspace && (
+        <Card>
         <CardHeader>
           <CardTitle>Payment History</CardTitle>
           <CardDescription>Your recent invoices and payments</CardDescription>
@@ -389,6 +411,7 @@ export default function BillingPage() {
           </div>
         </CardContent>
       </Card>
+      )}
     </div>
   )
 }

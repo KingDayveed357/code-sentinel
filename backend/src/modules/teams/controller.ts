@@ -1,7 +1,7 @@
 // =====================================================
 // modules/teams/controller.ts
 // =====================================================
-import type { FastifyRequest, FastifyReply } from 'fastify';
+import { type FastifyRequest, type FastifyReply, fastify } from 'fastify';
 import { TeamService } from './service';
 import { z } from 'zod';
 
@@ -12,11 +12,11 @@ const createTeamSchema = z.object({
 
 const inviteMemberSchema = z.object({
   email: z.string().email(),
-  role: z.enum(['admin', 'developer']),
+  role: z.enum(['admin', 'developer', 'viewer']),
 });
 
 const updateRoleSchema = z.object({
-  role: z.enum(['admin', 'developer']),
+  role: z.enum(['admin', 'developer', 'viewer']),
 });
 
 export class TeamController {
@@ -39,15 +39,49 @@ export class TeamController {
 
   /**
    * GET /api/teams - List user's teams
+   * Returns canonical shape: { team_id, team_name, user_role, member_count }
    */
   async listTeams(request: FastifyRequest, reply: FastifyReply) {
     const userId = request.profile!.id;
 
     const teams = await this.service.getUserTeams(userId);
 
+    // Transform to canonical API shape
+    // Handle both RPC return formats (nested or flat)
+    const canonicalTeams = teams.map((item: any) => {
+      // If RPC returns flat structure
+      if (item.team_id || item.id) {
+        return {
+          team_id: item.team_id || item.id,
+          team_name: item.team_name || item.name,
+          user_role: item.role || item.user_role,
+          member_count: item.member_count || item.memberCount || 0,
+        };
+      }
+      
+      // If RPC returns nested structure
+      if (item.team) {
+        return {
+          team_id: item.team.id,
+          team_name: item.team.name,
+          user_role: item.role,
+          member_count: item.memberCount || 0,
+        };
+      }
+
+      // Fallback: log and return safe defaults
+      request.server.log.warn({ item }, 'Unexpected team structure from RPC');
+      return {
+        team_id: item.id || 'unknown',
+        team_name: item.name || 'Unknown Team',
+        user_role: item.role || 'viewer',
+        member_count: item.member_count || item.memberCount || 0,
+      };
+    });
+
     return reply.send({
       success: true,
-      teams,
+      teams: canonicalTeams,
     });
   }
 
@@ -56,6 +90,13 @@ export class TeamController {
    */
   async getTeam(request: FastifyRequest, reply: FastifyReply) {
     const { id: teamId, role, isOwner } = request.team!;
+
+    // Get full team details
+    const { data: teamData } = await request.server.supabase
+      .from('teams')
+      .select('id, name, slug, owner_id, plan, subscription_status, created_at, updated_at')
+      .eq('id', teamId)
+      .single();
 
     // Get team members
     const { data: members } = await request.server.supabase
@@ -76,7 +117,7 @@ export class TeamController {
     return reply.send({
       success: true,
       team: {
-        id: teamId,
+        ...teamData,
         role,
         isOwner,
       },
@@ -157,6 +198,37 @@ export class TeamController {
     return reply.send({
       success: true,
       member,
+    });
+  }
+
+  /**
+   * PATCH /api/teams/:teamId - Update team (name only, owner only)
+   */
+  async updateTeam(request: FastifyRequest, reply: FastifyReply) {
+    const teamId = request.team!.id;
+    const userId = request.profile!.id;
+    const body = z.object({ name: z.string().min(1).max(100) }).parse(request.body);
+
+    const team = await this.service.updateTeamName(teamId, body.name, userId);
+
+    return reply.send({
+      success: true,
+      team,
+    });
+  }
+
+  /**
+   * DELETE /api/teams/:teamId - Delete team (owner only)
+   */
+  async deleteTeam(request: FastifyRequest, reply: FastifyReply) {
+    const teamId = request.team!.id;
+    const userId = request.profile!.id;
+
+    await this.service.deleteTeam(teamId, userId);
+
+    return reply.send({
+      success: true,
+      message: 'Team deleted successfully',
     });
   }
 

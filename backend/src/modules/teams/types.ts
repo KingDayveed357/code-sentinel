@@ -20,7 +20,7 @@ export interface TeamMember {
   id: string;
   team_id: string;
   user_id: string;
-  role: 'owner' | 'admin' | 'developer';
+  role: 'owner' | 'admin' | 'developer' | 'viewer';
   status: 'active' | 'pending' | 'suspended';
   invited_by: string | null;
   invited_at: string;
@@ -33,7 +33,7 @@ export interface TeamInvitation {
   id: string;
   team_id: string;
   email: string;
-  role: 'admin' | 'developer';
+  role: 'admin' | 'developer' | 'viewer';
   invited_by: string;
   token: string;
   status: 'pending' | 'accepted' | 'revoked' | 'expired';
@@ -42,10 +42,11 @@ export interface TeamInvitation {
   created_at: string;
 }
 
-export type TeamRole = 'owner' | 'admin' | 'developer';
+export type TeamRole = 'owner' | 'admin' | 'developer' | 'viewer';
 
 export const ROLE_HIERARCHY = {
-  owner: 3,
-  admin: 2,
-  developer: 1,
+  owner: 4,
+  admin: 3,
+  developer: 2,
+  viewer: 1,
 } as const;

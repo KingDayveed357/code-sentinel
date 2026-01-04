@@ -23,7 +23,7 @@ export default async function teamsRoutes(fastify: FastifyInstance) {
     requireAuth,
     requireProfile,
     requireOnboardingCompleted,
-    requireTeamPlan, 
+    // Note: requireTeamPlan removed - billing is team-scoped, not user-scoped
   ];
 
   const teamPreHandler = [...basePreHandler, requireTeam];
@@ -94,6 +94,28 @@ export default async function teamsRoutes(fastify: FastifyInstance) {
       preHandler: [...teamPreHandler, requireMinimumRole('owner')],
     },
     (req, reply) => controller.updateMemberRole(req, reply)
+  );
+
+  /**
+   * PATCH /api/teams/:teamId - Update team (owner only)
+   */
+  fastify.patch(
+    '/:teamId',
+    {
+      preHandler: [...teamPreHandler, requireMinimumRole('owner')],
+    },
+    (req, reply) => controller.updateTeam(req, reply)
+  );
+
+  /**
+   * DELETE /api/teams/:teamId - Delete team (owner only)
+   */
+  fastify.delete(
+    '/:teamId',
+    {
+      preHandler: [...teamPreHandler, requireMinimumRole('owner')],
+    },
+    (req, reply) => controller.deleteTeam(req, reply)
   );
 
   /**

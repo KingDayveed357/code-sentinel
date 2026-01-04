@@ -15,7 +15,7 @@ export interface TeamMember {
   id: string;
   team_id: string;
   user_id: string;
-  role: 'owner' | 'admin' | 'developer';
+  role: 'owner' | 'admin' | 'developer' | 'viewer';
   status: 'active' | 'pending' | 'suspended';
   joined_at: string | null;
   users: {
@@ -30,7 +30,7 @@ export interface TeamInvitation {
   id: string;
   team_id: string;
   email: string;
-  role: 'admin' | 'developer';
+  role: 'admin' | 'developer' | 'viewer';
   invited_by: string;
   status: 'pending' | 'accepted' | 'revoked' | 'expired';
   created_at: string;
@@ -83,13 +83,15 @@ export const teamsApi = {
 
   /**
    * List user's teams
+   * Returns canonical shape: { team_id, team_name, user_role, member_count }
    */
   list: async (): Promise<{
     success: boolean;
     teams: Array<{
-      team: Team;
-      role: string;
-      memberCount: number;
+      team_id: string;
+      team_name: string;
+      user_role: 'owner' | 'admin' | 'developer' | 'viewer';
+      member_count: number;
     }>;
   }> => {
     return apiFetch('/teams', {
@@ -103,8 +105,17 @@ export const teamsApi = {
   get: async (teamId: string): Promise<{
     success: boolean;
     team: {
+      teamData: {
       id: string;
-      role: string;
+      name: string;
+      slug: string;
+      owner_id: string;
+      plan: 'Team' | 'Enterprise';
+      subscription_status: 'active' | 'past_due' | 'canceled' | 'trialing' | null;
+      created_at: string;
+      updated_at: string;
+      };
+      role: 'owner' | 'admin' | 'developer' | 'viewer';
       isOwner: boolean;
     };
     members: TeamMember[];
@@ -120,7 +131,7 @@ export const teamsApi = {
    */
   invite: async (
     teamId: string,
-    data: { email: string; role: 'admin' | 'developer' }
+    data: { email: string; role: 'admin' | 'developer' | 'viewer' }
   ): Promise<{ success: boolean; invitation: TeamInvitation }> => {
     return apiFetch(`/teams/${teamId}/invite`, {
       method: 'POST',
@@ -162,7 +173,7 @@ export const teamsApi = {
   updateMemberRole: async (
     teamId: string,
     memberId: string,
-    role: 'admin' | 'developer'
+    role: 'admin' | 'developer' | 'viewer'
   ): Promise<{ success: boolean; member: TeamMember }> => {
     return apiFetch(`/teams/${teamId}/members/${memberId}/role`, {
       method: 'PATCH',
@@ -274,6 +285,30 @@ export const teamsApi = {
   ): Promise<{ success: boolean }> => {
     const query = memberId ? `?memberId=${memberId}` : '';
     return apiFetch(`/teams/${teamId}/repositories/${repositoryId}/access${query}`, {
+      method: 'DELETE',
+      requireAuth: true,
+    });
+  },
+
+  /**
+   * Update team name (owner only)
+   */
+  updateTeam: async (
+    teamId: string,
+    data: { name: string }
+  ): Promise<{ success: boolean; team: Team }> => {
+    return apiFetch(`/teams/${teamId}`, {
+      method: 'PATCH',
+      requireAuth: true,
+      body: JSON.stringify(data),
+    });
+  },
+
+  /**
+   * Delete team (owner only)
+   */
+  deleteTeam: async (teamId: string): Promise<{ success: boolean; message: string }> => {
+    return apiFetch(`/teams/${teamId}`, {
       method: 'DELETE',
       requireAuth: true,
     });

@@ -7,6 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import { Loader2, AlertCircle, ArrowLeft, Activity as ActivityIcon } from "lucide-react";
 import Link from "next/link";
 import { teamsApi, type TeamActivity } from "@/lib/api/teams";
@@ -48,31 +56,88 @@ export default function TeamActivityPage({ params }: {params: Promise<{ teamId: 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
     
-    if (hours < 1) return "Just now";
-    if (hours < 24) return `${hours}h ago`;
-    if (hours < 48) return "Yesterday";
+    if (diffMins < 1) return "Just now";
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 7) return `${diffDays}d ago`;
+    
     return date.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
+      year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
       hour: "2-digit",
       minute: "2-digit",
     });
   };
 
   const getActionBadge = (action: string) => {
-    if (action.includes("added") || action.includes("created")) {
+    if (action.includes("created") || action.includes("invited") || action.includes("accepted")) {
       return "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-400";
     }
     if (action.includes("removed") || action.includes("deleted")) {
       return "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-400";
     }
-    if (action.includes("updated") || action.includes("changed")) {
+    if (action.includes("updated") || action.includes("changed") || action.includes("renamed")) {
       return "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-400";
     }
     return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400";
+  };
+
+  const formatActivityMessage = (activity: TeamActivity): string => {
+    const actor = activity.users?.name || activity.users?.email || "System";
+    const action = activity.action;
+    const metadata = activity.metadata || {};
+
+    // Human-readable messages based on action type
+    switch (action) {
+      case "team.created":
+        return `${actor} created the team "${metadata.team_name || "team"}"`;
+      
+      case "member.invited":
+        return `${actor} invited ${metadata.email} as ${metadata.role}`;
+      
+      case "member.invitation_accepted":
+        return `${metadata.email} accepted the invitation and joined as ${metadata.role}`;
+      
+      case "member.removed":
+        return `${actor} removed ${metadata.removed_user_email || "a member"} from the team`;
+      
+      case "member.role_changed":
+        return `${actor} changed ${metadata.user_email || "a member"}'s role from ${metadata.old_role} to ${metadata.new_role}`;
+      
+      case "team.renamed":
+        return `${actor} renamed the team from "${metadata.old_name}" to "${metadata.new_name}"`;
+      
+      case "team.deleted":
+        return `${actor} deleted the team "${metadata.team_name || "team"}"`;
+      
+      default:
+        // Fallback: format action name
+        const formattedAction = action
+          .replace(/\./g, " ")
+          .replace(/_/g, " ")
+          .replace(/\b\w/g, (l) => l.toUpperCase());
+        return `${actor} ${formattedAction}`;
+    }
+  };
+
+  const getActionLabel = (action: string): string => {
+    const labels: Record<string, string> = {
+      "team.created": "Team Created",
+      "member.invited": "Member Invited",
+      "member.invitation_accepted": "Invitation Accepted",
+      "member.removed": "Member Removed",
+      "member.role_changed": "Role Changed",
+      "team.renamed": "Team Renamed",
+      "team.deleted": "Team Deleted",
+    };
+    return labels[action] || action.replace(/\./g, " ").replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
   };
 
   if (loading) {
@@ -85,6 +150,27 @@ export default function TeamActivityPage({ params }: {params: Promise<{ teamId: 
 
   return (
     <div className="space-y-6">
+      {/* Breadcrumbs */}
+      <Breadcrumb>
+        <BreadcrumbList>
+          <BreadcrumbItem>
+            <BreadcrumbLink asChild>
+              <Link href="/dashboard/teams">Teams</Link>
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbLink asChild>
+              <Link href={`/dashboard/teams/${teamId}`}>Team</Link>
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbPage>Activity</BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
+
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" asChild>
           <Link href={`/dashboard/teams/${teamId}`}>
@@ -119,25 +205,25 @@ export default function TeamActivityPage({ params }: {params: Promise<{ teamId: 
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {activities.map((activity) => (
-                <div key={activity.id} className="flex items-start gap-4 p-4 border rounded-lg">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge className={getActionBadge(activity.action)}>
-                        {activity.action.replace(/\./g, " ").replace(/_/g, " ")}
+                <div key={activity.id} className="flex items-start gap-4 p-4 border rounded-lg hover:bg-muted/50 transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className={getActionBadge(activity.action)} variant="outline">
+                        {getActionLabel(activity.action)}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
                         {formatDate(activity.created_at)}
                       </span>
                     </div>
-                    <p className="text-sm">
-                      <strong>{activity.users?.name || "System"}</strong> performed an action
+                    <p className="text-sm font-medium">
+                      {formatActivityMessage(activity)}
                     </p>
-                    {activity.metadata && Object.keys(activity.metadata).length > 0 && (
-                      <div className="mt-2 text-xs text-muted-foreground">
-                        {JSON.stringify(activity.metadata, null, 2)}
-                      </div>
+                    {activity.users?.email && activity.users.email !== activity.users?.name && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {activity.users.email}
+                      </p>
                     )}
                   </div>
                 </div>

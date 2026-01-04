@@ -12,6 +12,32 @@ export class TeamService {
   constructor(private fastify: FastifyInstance) {}
 
   /**
+   * Helper: Log team activity
+   */
+  private async logActivity(
+    teamId: string,
+    actorId: string,
+    action: string,
+    resourceType: string,
+    resourceId: string,
+    metadata: any = {}
+  ): Promise<void> {
+    try {
+      await this.fastify.supabase.from('team_activity_log').insert({
+        team_id: teamId,
+        actor_id: actorId,
+        action,
+        resource_type: resourceType,
+        resource_id: resourceId,
+        metadata,
+      });
+    } catch (error) {
+      this.fastify.log.error({ error, teamId, action }, 'Failed to log team activity');
+      // Don't throw - activity logging should not break the main operation
+    }
+  }
+
+  /**
    * Create a new team
    * Automatically adds creator as owner
    */
@@ -58,6 +84,16 @@ export class TeamService {
     // Add creator as owner
     await this.addMember(team.id, userId, 'owner', userId);
 
+    // Log team creation
+    await this.logActivity(
+      team.id,
+      userId,
+      'team.created',
+      'team',
+      team.id,
+      { team_name: data.name }
+    );
+
     // Create team workspace
     try {
       const { data: workspace, error: workspaceError } = await this.fastify.supabase
@@ -66,6 +102,7 @@ export class TeamService {
           name: `${data.name} Workspace`,
           slug: `team-${slug}`,
           type: 'team',
+          owner_id: userId,
           team_id: team.id,
           plan: data.plan || 'Team',
           settings: {},
@@ -136,16 +173,46 @@ export class TeamService {
       memberCount: number;
     }>
   > {
-    const { data, error } = await this.fastify.supabase.rpc('get_user_teams', {
-      user_uuid: userId,
-    });
+    // Query teams directly instead of using RPC to ensure consistent structure
+    const { data: members, error: membersError } = await this.fastify.supabase
+      .from('team_members')
+      .select('role, team_id, teams!inner(id, name, slug, owner_id, plan, created_at, updated_at)')
+      .eq('user_id', userId)
+      .eq('status', 'active');
 
-    if (error) {
-      this.fastify.log.error({ error, userId }, 'Failed to get user teams');
+    if (membersError) {
+      this.fastify.log.error({ error: membersError, userId }, 'Failed to get user teams');
       throw this.fastify.httpErrors.internalServerError('Failed to load teams');
     }
 
-    return data || [];
+    if (!members || members.length === 0) {
+      return [];
+    }
+
+    // Get member counts for each team
+    const teamIds = members.map((m: any) => m.team_id);
+    const { data: memberCounts, error: countError } = await this.fastify.supabase
+      .from('team_members')
+      .select('team_id')
+      .in('team_id', teamIds)
+      .eq('status', 'active');
+
+    if (countError) {
+      this.fastify.log.warn({ error: countError }, 'Failed to get member counts');
+    }
+
+    // Count members per team
+    const countsByTeam: Record<string, number> = {};
+    (memberCounts || []).forEach((mc: any) => {
+      countsByTeam[mc.team_id] = (countsByTeam[mc.team_id] || 0) + 1;
+    });
+
+    // Transform to expected format
+    return members.map((member: any) => ({
+      team: member.teams as Team,
+      role: member.role as TeamRole,
+      memberCount: countsByTeam[member.team_id] || 1,
+    }));
   }
 
   /**
@@ -192,7 +259,7 @@ export class TeamService {
   async inviteMember(
     teamId: string,
     email: string,
-    role: 'admin' | 'developer',
+    role: 'admin' | 'developer' | 'viewer',
     invitedBy: string
   ): Promise<TeamInvitation> {
     // Validate inviter has permission
@@ -281,6 +348,16 @@ export class TeamService {
     // Send email
     await sendTeamInvitationEmail(email, invitation.token, teamId);
 
+    // Log invitation
+    await this.logActivity(
+      teamId,
+      invitedBy,
+      'member.invited',
+      'team_invitation',
+      invitation.id,
+      { email, role }
+    );
+
     this.fastify.log.info({ teamId, email }, 'Team invitation sent');
 
     return invitation as TeamInvitation;
@@ -353,6 +430,16 @@ export class TeamService {
       })
       .eq('id', invitation.id);
 
+    // Log invitation acceptance
+    await this.logActivity(
+      invitation.team_id,
+      userId,
+      'member.invitation_accepted',
+      'team_member',
+      member.id,
+      { email: invitation.email, role: invitation.role }
+    );
+
     // Get team
     const { data: team } = await this.fastify.supabase
       .from('teams')
@@ -412,6 +499,13 @@ export class TeamService {
       );
     }
 
+    // Get member details for logging
+    const { data: memberDetails } = await this.fastify.supabase
+      .from('team_members')
+      .select('user_id, role, users!inner(email, full_name)')
+      .eq('id', memberId)
+      .single();
+
     // Remove member
     const { error } = await this.fastify.supabase
       .from('team_members')
@@ -422,6 +516,20 @@ export class TeamService {
       this.fastify.log.error({ error }, 'Failed to remove member');
       throw this.fastify.httpErrors.internalServerError('Failed to remove member');
     }
+
+    // Log member removal
+    await this.logActivity(
+      teamId,
+      removedBy,
+      'member.removed',
+      'team_member',
+      memberId,
+      {
+        removed_user_id: member.user_id,
+        removed_user_email: (memberDetails as any)?.users?.email,
+        removed_role: member.role,
+      }
+    );
 
     this.fastify.log.info({ teamId, memberId }, 'Team member removed');
   }
@@ -453,6 +561,13 @@ export class TeamService {
       throw this.fastify.httpErrors.forbidden('Use transfer ownership endpoint instead');
     }
 
+    // Get member details for logging
+    const { data: memberBefore } = await this.fastify.supabase
+      .from('team_members')
+      .select('role, user_id, users!inner(email, full_name)')
+      .eq('id', memberId)
+      .single();
+
     const { data, error } = await this.fastify.supabase
       .from('team_members')
       .update({ role: newRole })
@@ -466,6 +581,135 @@ export class TeamService {
       throw this.fastify.httpErrors.internalServerError('Failed to update role');
     }
 
+    // Log role change
+    await this.logActivity(
+      teamId,
+      updatedBy,
+      'member.role_changed',
+      'team_member',
+      memberId,
+      {
+        user_id: data.user_id,
+        user_email: (memberBefore as any)?.users?.email,
+        old_role: memberBefore?.role,
+        new_role: newRole,
+      }
+    );
+
     return data as TeamMember;
+  }
+
+  /**
+   * Update team name
+   */
+  async updateTeamName(
+    teamId: string,
+    newName: string,
+    updatedBy: string
+  ): Promise<Team> {
+    // Get current team
+    const { data: team, error: teamError } = await this.fastify.supabase
+      .from('teams')
+      .select('*')
+      .eq('id', teamId)
+      .single();
+
+    if (teamError || !team) {
+      throw this.fastify.httpErrors.notFound('Team not found');
+    }
+
+    // Verify updater is owner
+    if (team.owner_id !== updatedBy) {
+      throw this.fastify.httpErrors.forbidden('Only team owner can rename the team');
+    }
+
+    const slug = generateSlug(newName);
+
+    // Check slug uniqueness (excluding current team)
+    const { data: existing } = await this.fastify.supabase
+      .from('teams')
+      .select('id')
+      .eq('slug', slug)
+      .neq('id', teamId)
+      .single();
+
+    if (existing) {
+      throw this.fastify.httpErrors.conflict(
+        'A team with this name already exists. Please choose a different name.'
+      );
+    }
+
+    // Update team
+    const { data: updatedTeam, error } = await this.fastify.supabase
+      .from('teams')
+      .update({
+        name: newName,
+        slug,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', teamId)
+      .select()
+      .single();
+
+    if (error || !updatedTeam) {
+      this.fastify.log.error({ error }, 'Failed to update team name');
+      throw this.fastify.httpErrors.internalServerError('Failed to update team name');
+    }
+
+    // Log team rename
+    await this.logActivity(
+      teamId,
+      updatedBy,
+      'team.renamed',
+      'team',
+      teamId,
+      { old_name: team.name, new_name: newName }
+    );
+
+    return updatedTeam as Team;
+  }
+
+  /**
+   * Delete team (owner only)
+   */
+  async deleteTeam(teamId: string, deletedBy: string): Promise<void> {
+    // Get team
+    const { data: team, error: teamError } = await this.fastify.supabase
+      .from('teams')
+      .select('*')
+      .eq('id', teamId)
+      .single();
+
+    if (teamError || !team) {
+      throw this.fastify.httpErrors.notFound('Team not found');
+    }
+
+    // Verify deleter is owner
+    if (team.owner_id !== deletedBy) {
+      throw this.fastify.httpErrors.forbidden('Only team owner can delete the team');
+    }
+
+    // Log team deletion (before deleting)
+    await this.logActivity(
+      teamId,
+      deletedBy,
+      'team.deleted',
+      'team',
+      teamId,
+      { team_name: team.name }
+    );
+
+    // Delete team (cascade will handle members, invitations, etc.)
+    const { error } = await this.fastify.supabase
+      .from('teams')
+      .delete()
+      .eq('id', teamId);
+
+    if (error) {
+      this.fastify.log.error({ error }, 'Failed to delete team');
+      throw this.fastify.httpErrors.internalServerError('Failed to delete team');
+    }
+
+    this.fastify.log.info({ teamId }, 'Team deleted');
   }
 }
