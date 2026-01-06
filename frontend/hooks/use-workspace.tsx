@@ -16,6 +16,7 @@ export function useWorkspace() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  // const { toast } = useToast();
 
   const {
     workspace,
@@ -80,7 +81,12 @@ export function useWorkspace() {
         targetWorkspace = allWorkspaces.find(w => w.id === workspaceIdFromUrl) || null;
         
         if (!targetWorkspace) {
-          toast.error('Workspace not found or access denied');
+          toast.error(
+            <div>
+              <strong>Workspace not found</strong>
+              <div>Falling back to your personal workspace</div>
+            </div>
+          );
           // Fallback to personal workspace
           targetWorkspace = allWorkspaces.find(w => w.type === 'personal') || allWorkspaces[0];
         }
@@ -109,7 +115,7 @@ export function useWorkspace() {
       }
     } catch (error) {
       console.error('❌ Failed to load workspaces:', error);
-      toast.error('Failed to load workspaces');
+      toast.error("Failed to load workspaces. Please refresh the page and try again");
     } finally {
       setLoading(false);
       setInitializing(false);
@@ -132,14 +138,19 @@ export function useWorkspace() {
     const targetWorkspace = workspaces.find(w => w.id === workspaceId);
     
     if (!targetWorkspace) {
-      toast.error('Workspace not found');
+      toast.error(
+        <div>
+          <strong>Workspace not found</strong>
+          <div>Falling back to your personal workspace</div>
+        </div>
+      );
       return;
     }
 
     // Check access
     const hasAccess = workspaces.some(w => w.id === workspaceId);
     if (!hasAccess) {
-      toast.error('You do not have access to this workspace');
+        toast.error("You do not have access to this workspace");
       return;
     }
 
@@ -150,10 +161,6 @@ export function useWorkspace() {
       from: workspace?.name,
       to: targetWorkspace.name,
       pathname,
-    });
-
-    const toastId = toast.loading(`Switching to ${targetWorkspace.name}...`, {
-      id: 'workspace-switch',
     });
 
     try {
@@ -187,11 +194,7 @@ export function useWorkspace() {
             const params = new URLSearchParams();
             params.set('workspace', workspaceId);
             
-            toast.warning('Resource not available in this workspace', {
-              id: toastId,
-              duration: 3000,
-            });
-            
+            toast.error("This resource is not available in the selected workspace");
             router.push(`${redirectTo}?${params.toString()}`);
             return; // Early return after redirect
           }
@@ -205,11 +208,7 @@ export function useWorkspace() {
           const params = new URLSearchParams();
           params.set('workspace', workspaceId);
           
-          toast.warning('Could not verify resource access', {
-            id: toastId,
-            duration: 3000,
-          });
-          
+          toast.error("Unable to access this resource in the selected workspace");
           router.push(`${redirectTo}?${params.toString()}`);
           return;
         }
@@ -240,15 +239,10 @@ export function useWorkspace() {
       });
 
       console.log('✅ Workspace switch complete');
-      toast.success(`Switched to ${targetWorkspace.name}`, {
-        id: toastId,
-        duration: 2000,
-      });
+       toast.success(`Switched to ${targetWorkspace.name}`);
     } catch (error) {
       console.error('❌ Workspace switch error:', error);
-      toast.error('Failed to switch workspace', {
-        id: toastId,
-      });
+      toast.success(`Switched to ${targetWorkspace.name}`);
     } finally {
       setIsSwitching(false);
       switchInProgressRef.current = false;

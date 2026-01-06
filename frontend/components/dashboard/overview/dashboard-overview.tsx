@@ -20,6 +20,7 @@ import { CriticalVulnerabilitiesCard } from "./critical-vulnerabilities-card";
 import { RecentScansCard } from "./recent-scans-card";
 import { UpgradeModal } from "./upgrade-modal";
 import { useWorkspace } from "@/hooks/use-workspace";
+import { useWorkspaceChangeListener } from "@/hooks/use-workspace-change-listener";
 import { useDashboardOverview, workspaceKeys } from "@/hooks/use-dashboard-data";
 
 /**
@@ -32,6 +33,9 @@ export function DashboardOverview() {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showBanner, setShowBanner] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  // Listen to workspace changes and invalidate queries
+  useWorkspaceChangeListener();
 
   // Use React Query hook for workspace-aware dashboard data
   // This automatically handles workspace switches and prevents stale data

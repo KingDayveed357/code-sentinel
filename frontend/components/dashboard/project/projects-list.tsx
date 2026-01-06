@@ -1,7 +1,7 @@
 // components/dashboard/projects-list.tsx 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -44,11 +44,16 @@ import {
   XCircle,
 } from "lucide-react";
 import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { repositoriesApi } from "@/lib/api/repositories";
 import { scansApi } from "@/lib/api/scans";
 import type { Repository } from "@/lib/api/repositories";
 import type { Scan } from "@/lib/api/scans";
 import { DisconnectProjectDialog } from "@/components/dashboard/project/disconnect-project-dialog";
+import { useWorkspace } from "@/hooks/use-workspace";
+import { useWorkspaceChangeListener } from "@/hooks/use-workspace-change-listener";
+import { workspaceKeys } from "@/hooks/use-dashboard-data";
+import { ProjectCardSkeleton, ProjectsHeaderSkeleton } from "./projects-skeleton";
 
 interface ProjectWithLatestScan extends Repository {
   latestScan?: Scan | null;
@@ -57,41 +62,34 @@ interface ProjectWithLatestScan extends Repository {
 export function ProjectsList() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [projects, setProjects] = useState<ProjectWithLatestScan[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const { workspace, isSwitching, initializing } = useWorkspace();
+  
+  // Listen to workspace changes
+  useWorkspaceChangeListener();
+
   const [searchQuery, setSearchQuery] = useState(searchParams?.get("search") || "");
   const [providerFilter, setProviderFilter] = useState(searchParams?.get("provider") || "all");
   const [statusFilter, setStatusFilter] = useState(searchParams?.get("status") || "all");
   const [page, setPage] = useState(Number(searchParams?.get("page")) || 1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [syncing, setSyncing] = useState(false);
   const [scanningProjectId, setScanningProjectId] = useState<string | null>(null);
   const [projectToDelete, setProjectToDelete] = useState<{id: string, name: string} | null>(null);
+  const [searchDebounce, setSearchDebounce] = useState<NodeJS.Timeout>();
+  
   const limit = 9;
 
-  useEffect(() => {
-    loadProjects();
-    updateURL();
-  }, [searchQuery, providerFilter, statusFilter, page]);
-
-  const updateURL = () => {
-    const params = new URLSearchParams();
-    if (searchQuery) params.set("search", searchQuery);
-    if (providerFilter !== "all") params.set("provider", providerFilter);
-    if (statusFilter !== "all") params.set("status", statusFilter);
-    if (page > 1) params.set("page", String(page));
-    
-    const queryString = params.toString();
-    router.push(`/dashboard/projects${queryString ? `?${queryString}` : ""}`, { scroll: false });
-  };
-
-  const loadProjects = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
+  // Workspace-aware query for projects
+  const {
+    data: projectsData,
+    isLoading,
+    error: queryError,
+    refetch
+  } = useQuery({
+    queryKey: workspace 
+      ? [...workspaceKeys.projects(workspace.id), 'list', { searchQuery, providerFilter, statusFilter, page, limit }]
+      : ['projects', 'list', 'none'],
+    queryFn: async () => {
+      console.log('📦 Fetching projects for workspace:', workspace?.name);
       const params: any = { page, limit };
       if (searchQuery) params.search = searchQuery;
       if (providerFilter !== "all") params.provider = providerFilter;
@@ -118,34 +116,46 @@ export function ProjectsList() {
         })
       );
 
-      setProjects(projectsWithScans);
-      setTotalPages(data.pages);
-      setTotal(data.total);
-    } catch (err: any) {
-      setError(err.message || "Failed to load projects");
-    } finally {
-      setLoading(false);
-    }
+      return {
+        projects: projectsWithScans,
+        total: data.total,
+        pages: data.pages
+      };
+    },
+    enabled: !!workspace,
+    staleTime: 30 * 1000,
+    refetchOnMount: 'always',
+  });
+
+  const projects = projectsData?.projects ?? [];
+  const totalPages = projectsData?.pages ?? 1;
+  const total = projectsData?.total ?? 0;
+  const loading = isLoading || isSwitching || initializing;
+  const error = queryError ? (queryError as Error).message || "Failed to load projects" : null;
+
+  const updateURL = () => {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set("search", searchQuery);
+    if (providerFilter !== "all") params.set("provider", providerFilter);
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (page > 1) params.set("page", String(page));
+    
+    const queryString = params.toString();
+    router.push(`/dashboard/projects${queryString ? `?${queryString}` : ""}`, { scroll: false });
   };
 
   const handleSync = async () => {
     try {
-      setSyncing(true);
-      setError(null);
       await repositoriesApi.sync();
-      await loadProjects();
+      refetch();
     } catch (err: any) {
-      setError(err.message || "Failed to sync projects");
-    } finally {
-      setSyncing(false);
+      console.error('Sync failed:', err);
     }
   };
-
 
   const handleRunScan = async (projectId: string) => {
     try {
       setScanningProjectId(projectId);
-      setError(null);
       
       const project = projects.find(p => p.id === projectId);
       const result = await scansApi.start(projectId, {
@@ -155,22 +165,39 @@ export function ProjectsList() {
 
       router.push(`/dashboard/projects/${projectId}/scans/${result.scan_id}/report`);
     } catch (err: any) {
-      setError(err.message || "Failed to start scan");
+      console.error('Scan failed:', err);
     } finally {
       setScanningProjectId(null);
     }
   };
 
+  const handleSearchChange = (value: string) => {
+    if (searchDebounce) clearTimeout(searchDebounce);
+    setSearchDebounce(
+      setTimeout(() => {
+        setSearchQuery(value);
+        setPage(1);
+        updateURL();
+      }, 300)
+    );
+  };
+
+  const onDisconnectSuccess = (deletedId: string) => {
+    // Invalidate projects query to refetch
+    if (workspace) {
+      queryClient.invalidateQueries({
+        queryKey: workspaceKeys.projects(workspace.id)
+      });
+    }
+  };
+
   const getProviderIcon = (provider: string) => {
     switch (provider) {
-      case "github":
-        return Github;
+      case "github": return Github;
       case "gitlab":
       case "bitbucket":
-      case "jenkins":
-        return GitBranch;
-      default:
-        return GitBranch;
+      case "jenkins": return GitBranch;
+      default: return GitBranch;
     }
   };
 
@@ -244,46 +271,42 @@ export function ProjectsList() {
     });
   };
 
-  const onDisconnectSuccess = (deletedId: string) => {
-    setProjects(prev => prev.filter(p => p.id !== deletedId));
-    setTotal(t => t - 1);
-  };
-
-
-  const [searchDebounce, setSearchDebounce] = useState<NodeJS.Timeout>();
-  const handleSearchChange = (value: string) => {
-    if (searchDebounce) clearTimeout(searchDebounce);
-    setSearchDebounce(
-      setTimeout(() => {
-        setSearchQuery(value);
-        setPage(1);
-      }, 300)
-    );
-  };
-
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage your connected projects ({total} total)
-          </p>
+      {/* Header - Static with dynamic workspace name */}
+      {loading && !workspace ? (
+        <ProjectsHeaderSkeleton />
+      ) : (
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
+            <p className="text-muted-foreground mt-1">
+              {loading ? (
+                "Loading projects..."
+              ) : (
+                <>Manage your connected projects ({total} total)</>
+              )}
+            </p>
+            {workspace && (
+              <p className="text-sm text-muted-foreground mt-1">
+                Workspace: <span className="font-medium">{workspace.name}</span>
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={handleSync} disabled={loading}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Sync
+            </Button>
+            <Button asChild>
+              <Link href="/dashboard/integrations/github">
+                <Plus className="mr-2 h-4 w-4" />
+                Import Project
+              </Link>
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={handleSync} disabled={syncing}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-            Sync
-          </Button>
-          <Button asChild>
-            <Link href="/dashboard/integrations/github">
-              <Plus className="mr-2 h-4 w-4" />
-              Import Project
-            </Link>
-          </Button>
-        </div>
-      </div>
+      )}
 
       {error && (
         <Alert variant="destructive">
@@ -292,7 +315,7 @@ export function ProjectsList() {
         </Alert>
       )}
 
-      {/* Filters */}
+      {/* Filters - Always visible */}
       <div className="flex flex-col md:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -301,6 +324,7 @@ export function ProjectsList() {
             className="pl-9"
             defaultValue={searchQuery}
             onChange={(e) => handleSearchChange(e.target.value)}
+            disabled={loading}
           />
         </div>
 
@@ -309,7 +333,9 @@ export function ProjectsList() {
           onValueChange={(v) => {
             setProviderFilter(v);
             setPage(1);
+            updateURL();
           }}
+          disabled={loading}
         >
           <SelectTrigger className="w-full md:w-[180px]">
             <SelectValue placeholder="Integration" />
@@ -319,7 +345,6 @@ export function ProjectsList() {
             <SelectItem value="github">GitHub</SelectItem>
             <SelectItem value="gitlab" disabled>GitLab (Soon)</SelectItem>
             <SelectItem value="bitbucket" disabled>Bitbucket (Soon)</SelectItem>
-            <SelectItem value="jenkins" disabled>Jenkins (Soon)</SelectItem>
           </SelectContent>
         </Select>
 
@@ -328,7 +353,9 @@ export function ProjectsList() {
           onValueChange={(v) => {
             setStatusFilter(v);
             setPage(1);
+            updateURL();
           }}
+          disabled={loading}
         >
           <SelectTrigger className="w-full md:w-[180px]">
             <SelectValue placeholder="Scan Status" />
@@ -343,10 +370,12 @@ export function ProjectsList() {
         </Select>
       </div>
 
-      {/* Loading State */}
+      {/* Loading State - Show skeletons */}
       {loading && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <ProjectCardSkeleton key={i} />
+          ))}
         </div>
       )}
 
@@ -439,13 +468,13 @@ export function ProjectsList() {
                             </Link>
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                         <DropdownMenuItem
-                      className="text-destructive focus:text-destructive focus:bg-destructive/10"
-                      onClick={() => setProjectToDelete({ id: project.id, name: project.name })}
-                   >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Disconnect
-                   </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                            onClick={() => setProjectToDelete({ id: project.id, name: project.name })}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Disconnect
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
@@ -560,13 +589,6 @@ export function ProjectsList() {
                 </Card>
               );
             })}
-
-            <DisconnectProjectDialog 
-          project={projectToDelete}
-          open={!!projectToDelete}
-          onOpenChange={(open) => !open && setProjectToDelete(null)}
-          onSuccess={onDisconnectSuccess}
-       />
           </div>
 
           {/* Pagination */}
@@ -579,7 +601,10 @@ export function ProjectsList() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  onClick={() => {
+                    setPage(p => Math.max(1, p - 1));
+                    updateURL();
+                  }}
                   disabled={page === 1}
                 >
                   <ChevronLeft className="h-4 w-4" />
@@ -603,7 +628,10 @@ export function ProjectsList() {
                         key={pageNum}
                         variant={page === pageNum ? "default" : "outline"}
                         size="sm"
-                        onClick={() => setPage(pageNum)}
+                        onClick={() => {
+                          setPage(pageNum);
+                          updateURL();
+                        }}
                         className="w-10"
                       >
                         {pageNum}
@@ -614,7 +642,10 @@ export function ProjectsList() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  onClick={() => {
+                    setPage(p => Math.min(totalPages, p + 1));
+                    updateURL();
+                  }}
                   disabled={page === totalPages}
                 >
                   Next
@@ -625,6 +656,13 @@ export function ProjectsList() {
           )}
         </>
       )}
+
+      <DisconnectProjectDialog 
+        project={projectToDelete}
+        open={!!projectToDelete}
+        onOpenChange={(open) => !open && setProjectToDelete(null)}
+        onSuccess={onDisconnectSuccess}
+      />
     </div>
   );
 }

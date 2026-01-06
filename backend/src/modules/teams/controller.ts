@@ -92,19 +92,31 @@ export class TeamController {
     const { id: teamId, role, isOwner } = request.team!;
 
     // Get full team details
-    const { data: teamData } = await request.server.supabase
+    const { data: teamData, error } = await request.server.supabase
       .from('teams')
-      .select('id, name, slug, owner_id, plan, subscription_status, created_at, updated_at')
+      .select('id, name, slug, owner_id, plan, created_at, updated_at')
       .eq('id', teamId)
       .single();
+ 
+
+    if (error || !teamData) {
+     request.server.log.error({ error, teamId }, 'Failed to load team');
+      throw request.server.httpErrors.notFound('Team not found');
+    }
+
 
     // Get team members
-    const { data: members } = await request.server.supabase
+    const { data: members, error: membersError } = await request.server.supabase
       .from('team_members')
       .select('*, users!team_members_user_id_fkey(id, email, full_name, avatar_url)')
       .eq('team_id', teamId)
       .eq('status', 'active')
       .order('joined_at', { ascending: false });
+
+    if (membersError || !members) {
+      request.server.log.error({ membersError, teamId }, 'Failed to load team members');
+      throw request.server.httpErrors.internalServerError('Failed to load team members');
+    }
 
     // Get pending invitations
     const { data: invitations } = await request.server.supabase
@@ -114,16 +126,16 @@ export class TeamController {
       .eq('status', 'pending')
       .order('created_at', { ascending: false });
 
-    return reply.send({
-      success: true,
-      team: {
-        ...teamData,
-        role,
-        isOwner,
-      },
-      members: members || [],
-      invitations: invitations || [],
-    });
+   return reply.send({
+    success: true,
+    team: {
+      ...teamData,
+      role,
+      isOwner,
+    },
+    members: members || [],
+    invitations: invitations || [],
+  });
   }
 
   /**

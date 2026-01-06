@@ -105,7 +105,6 @@ export const teamsApi = {
   get: async (teamId: string): Promise<{
     success: boolean;
     team: {
-      teamData: {
       id: string;
       name: string;
       slug: string;
@@ -114,7 +113,6 @@ export const teamsApi = {
       subscription_status: 'active' | 'past_due' | 'canceled' | 'trialing' | null;
       created_at: string;
       updated_at: string;
-      };
       role: 'owner' | 'admin' | 'developer' | 'viewer';
       isOwner: boolean;
     };

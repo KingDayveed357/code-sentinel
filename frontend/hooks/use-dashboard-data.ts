@@ -23,6 +23,14 @@ export const workspaceKeys = {
     [...workspaceKeys.projects(workspaceId), 'detail', projectId] as const,
   entitlements: (workspaceId: string) => 
     [...workspaceKeys.all(workspaceId), 'entitlements'] as const,
+  integrations: (workspaceId: string) => 
+    [...workspaceKeys.all(workspaceId), 'integrations'] as const,
+  github: (workspaceId: string) => 
+    [...workspaceKeys.all(workspaceId), 'github'] as const,
+  githubRepos: (workspaceId: string) => 
+    [...workspaceKeys.github(workspaceId), 'repositories'] as const,
+  githubStatus: (workspaceId: string) => 
+    [...workspaceKeys.github(workspaceId), 'integration-status'] as const,
 };
 
 /**
@@ -106,6 +114,26 @@ export function useEntitlements() {
 }
 
 /**
+ * Hook to fetch integrations for current workspace
+ */
+export function useIntegrations() {
+  const workspace = useCurrentWorkspace();
+
+  return useQuery({
+    queryKey: workspace 
+      ? workspaceKeys.integrations(workspace.id)
+      : ['integrations', 'none'],
+    queryFn: () => {
+      console.log('🔌 Fetching integrations for workspace:', workspace?.name);
+      return integrationsApi.getIntegrations();
+    },
+    enabled: !!workspace,
+    staleTime: 30 * 1000, // 30 seconds
+    refetchOnMount: 'always',
+  });
+}
+
+/**
  * Hook to invalidate all queries for current workspace
  * Useful after mutations or workspace switches
  */
@@ -141,6 +169,10 @@ export function usePrefetchWorkspace() {
           queryKey: workspaceKeys.projectsList(workspaceId),
           queryFn: () => repositoriesApi.list({}),
         }),
+        queryClient.prefetchQuery({
+          queryKey: workspaceKeys.integrations(workspaceId),
+          queryFn: () => integrationsApi.getIntegrations(),
+        }),
       ]);
     },
     [queryClient]
@@ -156,7 +188,7 @@ export function useGitHubRepositories() {
 
   return useQuery({
     queryKey: workspace 
-      ? [...workspaceKeys.all(workspace.id), 'github', 'repositories'] 
+      ? workspaceKeys.githubRepos(workspace.id)
       : ['github', 'repositories', 'none'],
     queryFn: async () => {
       console.log('📦 Fetching GitHub repositories for workspace:', workspace?.name);
@@ -177,7 +209,7 @@ export function useGitHubIntegrationStatus() {
 
   return useQuery({
     queryKey: workspace 
-      ? [...workspaceKeys.all(workspace.id), 'github', 'integration-status'] 
+      ? workspaceKeys.githubStatus(workspace.id)
       : ['github', 'integration-status', 'none'],
     queryFn: async () => {
       console.log('🔌 Fetching GitHub integration status for workspace:', workspace?.name);

@@ -7,18 +7,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Mail, Loader2, AlertCircle, CheckCircle } from "lucide-react";
 import { teamsApi } from "@/lib/api/teams";
-import { useToast } from "@/hooks/use-toast";
-
-
+import { workspacesApi } from "@/lib/api/workspaces";
+import { toast } from 'sonner';
 
 export default function AcceptInvitationPage({ params }: { params: Promise<{token: string }> } ) {
   const router = useRouter();
-  const { toast } = useToast();
   const [accepting, setAccepting] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { token } = use(params); 
+  
   const handleAcceptInvitation = async () => {
     try {
       setAccepting(true);
@@ -27,22 +26,44 @@ export default function AcceptInvitationPage({ params }: { params: Promise<{toke
       const result = await teamsApi.acceptInvitation(token);
       setAccepted(true);
 
-      toast({
-        title: "Invitation Accepted",
-        description: `You've joined ${result.team.name}`,
-      });
+      toast.success(
+        <div>
+          <strong>Invitation Accepted</strong>
+          <div>You've joined {result.team.name}</div>
+        </div>
+      );
 
-      // Redirect to team page after 2 seconds
-      setTimeout(() => {
-        router.push(`/dashboard/teams/${result.team.id}`);
-      }, 2000);
+      // Fetch all workspaces to find the team workspace ID
+      try {
+        const workspacesResponse = await workspacesApi.list();
+        const teamWorkspace = workspacesResponse.workspaces.find(
+          w => w.type === 'team' && w.team_id === result.team.id
+        );
+
+        // Redirect to team page after 2 seconds with workspace query param
+        setTimeout(() => {
+          if (teamWorkspace) {
+            router.push(`/dashboard/teams/${result.team.id}?workspace=${teamWorkspace.id}`);
+          } else {
+            // Fallback if workspace not found
+            router.push(`/dashboard/teams/${result.team.id}`);
+          }
+        }, 2000);
+      } catch (workspaceError) {
+        console.error('Failed to fetch workspace:', workspaceError);
+        // Fallback redirect without workspace param
+        setTimeout(() => {
+          router.push(`/dashboard/teams/${result.team.id}`);
+        }, 2000);
+      }
     } catch (error: any) {
       setError(error.message || "Failed to accept invitation");
-      toast({
-        title: "Failed to Accept Invitation",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Accept Invitation</strong>
+          <div>{error.message || "Please try again"}</div>
+        </div>
+      );
     } finally {
       setAccepting(false);
     }

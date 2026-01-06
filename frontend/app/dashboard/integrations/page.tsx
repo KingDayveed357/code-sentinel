@@ -1,7 +1,6 @@
 // app/dashboard/integrations/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,7 +14,6 @@ import {
   Package,
   Container,
   AlertCircle,
-  Loader2,
   Check,
   Settings,
   ExternalLink,
@@ -23,6 +21,8 @@ import {
 import Link from "next/link";
 import { integrationsApi, type SafeIntegration } from "@/lib/api/integrations";
 import { useWorkspace } from "@/hooks/use-workspace";
+import { useWorkspaceChangeListener } from "@/hooks/use-workspace-change-listener";
+import { IntegrationCardSkeleton, WorkspaceNameSkeleton } from "@/components/dashboard/integrations-skeleton";
 import { workspaceKeys } from "@/hooks/use-dashboard-data";
 
 interface IntegrationConfig {
@@ -34,8 +34,94 @@ interface IntegrationConfig {
   available: boolean;
 }
 
+// Define all available integrations (static data)
+const allIntegrations: IntegrationConfig[] = [
+  // Source Control
+  {
+    id: "github",
+    name: "GitHub",
+    category: "source_control",
+    icon: Github,
+    description: "Import and scan GitHub repositories",
+    available: true,
+  },
+  {
+    id: "gitlab",
+    name: "GitLab",
+    category: "source_control",
+    icon: GitBranch,
+    description: "Import and scan GitLab projects",
+    available: false,
+  },
+  {
+    id: "bitbucket",
+    name: "Bitbucket",
+    category: "source_control",
+    icon: GitBranch,
+    description: "Import and scan Bitbucket repositories",
+    available: false,
+  },
+  // CI/CD
+  {
+    id: "jenkins",
+    name: "Jenkins",
+    category: "ci_cd",
+    icon: Rocket,
+    description: "Integrate with Jenkins pipelines",
+    available: false,
+  },
+  // Notifications
+  {
+    id: "slack",
+    name: "Slack",
+    category: "notifications",
+    icon: MessageSquare,
+    description: "Send scan results and alerts to Slack",
+    available: false,
+  },
+  // Artifact Registries
+  {
+    id: "npm",
+    name: "NPM Registry",
+    category: "artifact_registries",
+    icon: Package,
+    description: "Scan NPM packages for vulnerabilities",
+    available: false,
+  },
+  {
+    id: "dockerhub",
+    name: "Docker Hub",
+    category: "artifact_registries",
+    icon: Container,
+    description: "Scan container images for security issues",
+    available: false,
+  },
+];
+
+const categories = {
+  source_control: {
+    title: "Source Control",
+    description: "Connect your code repositories",
+  },
+  ci_cd: {
+    title: "CI/CD",
+    description: "Integrate with your deployment pipelines",
+  },
+  notifications: {
+    title: "Notifications",
+    description: "Get alerts when vulnerabilities are found",
+  },
+  artifact_registries: {
+    title: "Artifact Registries",
+    description: "Scan packages and container images",
+  },
+};
+
 export default function IntegrationsPage() {
-  const { workspace, isSwitching } = useWorkspace();
+  const { workspace, isSwitching, initializing } = useWorkspace();
+  
+  // Listen to workspace changes and invalidate integrations queries
+  useWorkspaceChangeListener();
   
   // Use React Query for workspace-aware integrations data
   const {
@@ -56,120 +142,38 @@ export default function IntegrationsPage() {
   });
 
   const connectedIntegrations = integrationsData?.integrations ?? [];
-  const loading = isLoading || isSwitching;
+  const loading = isLoading || isSwitching || initializing;
   const error = queryError ? (queryError as Error).message || "Failed to load integrations" : null;
-
-  // Define all available integrations
-  const allIntegrations: IntegrationConfig[] = [
-    // Source Control
-    {
-      id: "github",
-      name: "GitHub",
-      category: "source_control",
-      icon: Github,
-      description: "Import and scan GitHub repositories",
-      available: true,
-    },
-    {
-      id: "gitlab",
-      name: "GitLab",
-      category: "source_control",
-      icon: GitBranch,
-      description: "Import and scan GitLab projects",
-      available: false,
-    },
-    {
-      id: "bitbucket",
-      name: "Bitbucket",
-      category: "source_control",
-      icon: GitBranch,
-      description: "Import and scan Bitbucket repositories",
-      available: false,
-    },
-    // CI/CD
-    {
-      id: "jenkins",
-      name: "Jenkins",
-      category: "ci_cd",
-      icon: Rocket,
-      description: "Integrate with Jenkins pipelines",
-      available: false,
-    },
-    // Notifications
-    {
-      id: "slack",
-      name: "Slack",
-      category: "notifications",
-      icon: MessageSquare,
-      description: "Send scan results and alerts to Slack",
-      available: false,
-    },
-    // Artifact Registries
-    {
-      id: "npm",
-      name: "NPM Registry",
-      category: "artifact_registries",
-      icon: Package,
-      description: "Scan NPM packages for vulnerabilities",
-      available: false,
-    },
-    {
-      id: "dockerhub",
-      name: "Docker Hub",
-      category: "artifact_registries",
-      icon: Container,
-      description: "Scan container images for security issues",
-      available: false,
-    },
-  ];
-
-  const categories = {
-    source_control: {
-      title: "Source Control",
-      description: "Connect your code repositories",
-    },
-    ci_cd: {
-      title: "CI/CD",
-      description: "Integrate with your deployment pipelines",
-    },
-    notifications: {
-      title: "Notifications",
-      description: "Get alerts when vulnerabilities are found",
-    },
-    artifact_registries: {
-      title: "Artifact Registries",
-      description: "Scan packages and container images",
-    },
-  };
 
   // Helper to check if integration is connected
   const isConnected = (integrationId: string): SafeIntegration | undefined => {
     return connectedIntegrations.find(i => i.provider === integrationId && i.connected);
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  // Helper to determine if an integration card should show loading
+  const shouldShowLoading = (integration: IntegrationConfig): boolean => {
+    return loading && integration.available;
+  };
 
   return (
     <div className="space-y-8">
-      {/* Header */}
+      {/* Static Header - Always visible */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Integrations</h1>
         <p className="text-muted-foreground mt-1">
           Connect CodeSentinel with your development tools and workflows
         </p>
-        {workspace && (
+        {/* Dynamic workspace name with skeleton */}
+        {loading && !workspace ? (
+          <WorkspaceNameSkeleton />
+        ) : workspace ? (
           <p className="text-sm text-muted-foreground mt-2">
             Managing integrations for <span className="font-medium">{workspace.name}</span>
           </p>
-        )}
+        ) : null}
       </div>
 
+      {/* Error Alert */}
       {error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -177,7 +181,7 @@ export default function IntegrationsPage() {
         </Alert>
       )}
 
-      {/* Integration Categories */}
+      {/* Integration Categories - All static titles always visible */}
       {Object.entries(categories).map(([categoryKey, category]) => {
         const categoryIntegrations = allIntegrations.filter(
           (i) => i.category === categoryKey
@@ -185,16 +189,32 @@ export default function IntegrationsPage() {
 
         return (
           <div key={categoryKey} className="space-y-4">
+            {/* Static Category Header - Always visible */}
             <div>
               <h2 className="text-xl font-semibold">{category.title}</h2>
               <p className="text-sm text-muted-foreground">{category.description}</p>
             </div>
 
+            {/* Integration Cards Grid */}
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {categoryIntegrations.map((integration) => {
                 const Icon = integration.icon;
                 const connected = isConnected(integration.id);
+                const showLoading = shouldShowLoading(integration);
                 
+                // Show skeleton only for active integrations during loading
+                if (showLoading) {
+                  return (
+                    <IntegrationCardSkeleton
+                      key={integration.id}
+                      icon={Icon}
+                      name={integration.name}
+                      description={integration.description}
+                    />
+                  );
+                }
+                
+                // Render full card for loaded state or inactive integrations
                 return (
                   <Card
                     key={integration.id}

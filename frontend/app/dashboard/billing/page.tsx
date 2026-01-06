@@ -9,10 +9,12 @@ import { CreditCard, Check, Zap, Database, Activity, TrendingUp, Shield, Infinit
 import { useAuth } from "@/hooks/use-auth"
 import { useEntitlements } from "@/hooks/use-entitlements"
 import { useWorkspace } from "@/hooks/use-workspace"
+import { useWorkspaceChangeListener } from "@/hooks/use-workspace-change-listener"
+import { BillingPageSkeleton } from "@/components/dashboard/billing-skeleton"
 
 export default function BillingPage() {
   const { user } = useAuth()
-  const { workspace, isTeamWorkspace } = useWorkspace()
+  const { workspace, isTeamWorkspace, initializing } = useWorkspace()
   const { 
     entitlements, 
     loading, 
@@ -24,7 +26,18 @@ export default function BillingPage() {
     formatLimit 
   } = useEntitlements()
 
+  // Listen to workspace changes and invalidate entitlements queries
+  useWorkspaceChangeListener()
+
   const currentPlan = user?.plan?.toLowerCase() || "free"
+
+  // ✅ FIX: Check if user is the owner of the team workspace
+  const isTeamWorkspaceNonOwner = isTeamWorkspace && workspace?.owner_id !== user?.id
+
+  // Show skeleton during initial load or workspace transitions
+  if (initializing || (loading && !entitlements)) {
+    return <BillingPageSkeleton />;
+  }
 
   const plans = [
     {
@@ -129,18 +142,18 @@ export default function BillingPage() {
           Billing & Subscription
         </h1>
         <p className="text-muted-foreground">
-          {isTeamWorkspace 
+          {isTeamWorkspaceNonOwner 
             ? "Billing is handled by the team owner" 
             : "Manage your subscription and billing information"}
         </p>
       </div>
 
-      {/* Team Workspace Message */}
-      {isTeamWorkspace && (
+      {/* Team Workspace Non-Owner Message */}
+      {isTeamWorkspaceNonOwner && (
         <Alert>
           <Info className="h-4 w-4" />
           <AlertDescription>
-            You're currently in a team workspace. Billing and subscription management is handled by the team owner. 
+            You're currently in a team workspace where you are not the owner. Billing and subscription management is handled by the team owner. 
             Switch to your personal workspace to manage your own billing.
           </AlertDescription>
         </Alert>
@@ -165,7 +178,7 @@ export default function BillingPage() {
       )}
 
       {/* Current Usage Card */}
-      {!loading && entitlements && !isTeamWorkspace && (
+      {!loading && entitlements && !isTeamWorkspaceNonOwner && (
         <Card className="border-primary">
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -312,8 +325,8 @@ export default function BillingPage() {
         </Card>
       )}
 
-      {/* Plans Grid - Only show in personal workspace */}
-      {!isTeamWorkspace && (
+      {/* Plans Grid - Show in personal workspace OR if user is team owner */}
+      {!isTeamWorkspaceNonOwner && (
         <div>
           <h2 className="text-2xl font-bold mb-6">Choose Your Plan</h2>
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -354,8 +367,8 @@ export default function BillingPage() {
       </div>
       )}
 
-      {/* Payment Method - Only show in personal workspace */}
-      {!isTeamWorkspace && (
+      {/* Payment Method - Show in personal workspace OR if user is team owner */}
+      {!isTeamWorkspaceNonOwner && (
         <Card>
         <CardHeader>
           <CardTitle>Payment Method</CardTitle>
@@ -381,8 +394,8 @@ export default function BillingPage() {
       </Card>
       )}
 
-      {/* Payment History - Only show in personal workspace */}
-      {!isTeamWorkspace && (
+      {/* Payment History - Show in personal workspace OR if user is team owner */}
+      {!isTeamWorkspaceNonOwner && (
         <Card>
         <CardHeader>
           <CardTitle>Payment History</CardTitle>

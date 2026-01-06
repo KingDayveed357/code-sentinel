@@ -66,7 +66,7 @@ export default function TeamSettingsPage({
       setLoading(true);
       const data = await teamsApi.get(teamId);
       setTeam(data.team);
-      setTeamName(data.team.teamData.name);
+      setTeamName(data.team.name || "Team");
       console.log("Loaded team data:", data);
     } catch (error: any) {
       toast({
@@ -89,7 +89,10 @@ export default function TeamSettingsPage({
     try {
       setSaving(true);
       const result = await teamsApi.updateTeam(teamId, { name: teamName });
-      setTeam(result.team);
+      setTeam((prev: any) => ({
+        ...prev,
+        ...result.team,
+      }));
       toast({
         title: "Team Updated",
         description: "Team name has been updated successfully",

@@ -44,12 +44,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { toast } from "sonner"
+import { useToast } from "@/hooks/use-toast"
+import { useWorkspace } from "@/hooks/use-workspace"
+import { useWorkspaceChangeListener } from "@/hooks/use-workspace-change-listener"
 
 export default function SettingsPage() {
   const { theme: currentTheme, setTheme } = useTheme()
   const { user, refreshUser, logout } = useAuth()
+  const { toast } = useToast()
+  const { workspace } = useWorkspace()
   const [mounted, setMounted] = useState(false)
+  
+  // Listen to workspace changes and invalidate queries
+  useWorkspaceChangeListener()
   
   // State
   const [emailNotifications, setEmailNotifications] = useState(true)
@@ -86,7 +93,11 @@ export default function SettingsPage() {
       setIntegrations(data)
     } catch (error) {
       console.error("Failed to load integrations:", error)
-      toast.error("Failed to load integrations")
+      toast({
+        title: "Failed to load integrations",
+        description: "Please try again",
+        variant: "destructive",
+      })
     } finally {
       setLoadingIntegrations(false)
     }
@@ -97,10 +108,17 @@ export default function SettingsPage() {
       setSyncing(true)
       await authApi.resyncGitHub()
       await refreshUser()
-      toast.success("GitHub data synced successfully")
+      toast({
+        title: "Success",
+        description: "GitHub data synced successfully",
+      })
     } catch (error: any) {
       console.error("Resync failed:", error)
-      toast.error(error.message || "Failed to sync GitHub data")
+      toast({
+        title: "Sync failed",
+        description: error.message || "Failed to sync GitHub data",
+        variant: "destructive",
+      })
     } finally {
       setSyncing(false)
     }
@@ -108,14 +126,21 @@ export default function SettingsPage() {
 
   const handleDeleteAccount = async () => {
     if (deleteUsername !== username) {
-      toast.error("Username does not match")
+      toast({
+        title: "Username mismatch",
+        description: "The username you entered does not match your account",
+        variant: "destructive",
+      })
       return
     }
 
     try {
       setDeleting(true)
       await authApi.deleteAccount(deleteUsername)
-      toast.success("Account deleted successfully")
+      toast({
+        title: "Success",
+        description: "Account deleted successfully",
+      })
       setDeleteDialogOpen(false)
       
       // Sign out and redirect
@@ -124,7 +149,11 @@ export default function SettingsPage() {
       }, 1000)
     } catch (error: any) {
       console.error("Delete account failed:", error)
-      toast.error(error.message || "Failed to delete account")
+      toast({
+        title: "Delete failed",
+        description: error.message || "Failed to delete account",
+        variant: "destructive",
+      })
     } finally {
       setDeleting(false)
     }
@@ -137,7 +166,10 @@ export default function SettingsPage() {
       setDisconnecting(true)
       const result = await integrationsApi.disconnectIntegration(disconnectProvider)
       
-      toast.success(result.message)
+      toast({
+        title: "Success",
+        description: result.message,
+      })
       setDisconnectDialogOpen(false)
       setDisconnectProvider(null)
       
@@ -146,14 +178,21 @@ export default function SettingsPage() {
       
       // If GitHub was disconnected, sign out
       if (result.requiresSignOut) {
-        toast.info("Signing you out...")
+        toast({
+          title: "Info",
+          description: "Signing you out...",
+        })
         setTimeout(() => {
           logout()
         }, 1500)
       }
     } catch (error: any) {
       console.error("Disconnect failed:", error)
-      toast.error(error.message || "Failed to disconnect integration")
+      toast({
+        title: "Disconnect failed",
+        description: error.message || "Failed to disconnect integration",
+        variant: "destructive",
+      })
     } finally {
       setDisconnecting(false)
     }
