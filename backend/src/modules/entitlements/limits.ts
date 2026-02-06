@@ -18,7 +18,7 @@ export const PLAN_LIMITS = {
   Team: {
     repositories: 100,
     scans_per_month: Infinity,
-    concurrent_scans: 10,
+    concurrent_scans: 20,
     auto_scan: true,
     team_members: 10,
     priority_support: true,

@@ -87,7 +87,7 @@ export function ProjectBreadcrumbs({ projectId }: ProjectBreadcrumbsProps) {
       const scanId = scanIdMatch ? scanIdMatch[1] : null;
 
       if (scanId) {
-        const reportUrl = `${projectUrl}/scans/${scanId}/report`;
+        const reportUrl = `/dashboard/scans/${scanId}`;
         const isVulnerabilityPage = pathname.includes("/vulnerabilities/");
         items.push({ 
           label: "Report", 

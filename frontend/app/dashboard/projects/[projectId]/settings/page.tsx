@@ -8,14 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -42,7 +34,7 @@ import { useRouter } from "next/navigation";
 import { repositoriesApi } from "@/lib/api/repositories";
 import type { Repository } from "@/lib/api/repositories";
 import { apiFetch } from "@/lib/api";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner"
 import { DisconnectProjectDialog } from "@/components/dashboard/project/disconnect-project-dialog";
 
 interface RepositorySettings {
@@ -51,7 +43,7 @@ interface RepositorySettings {
   scan_on_pr: boolean;
   branch_filter: string[];
   excluded_branches: string[];
-  default_scan_type: "quick" | "full" | "custom";
+  default_scan_type: "quick" | "full"; // ✅ FIX: Removed 'custom'
   auto_create_issues: boolean;
   issue_severity_threshold: "critical" | "high" | "medium" | "low";
   issue_labels: string[];
@@ -65,11 +57,15 @@ export default function ProjectSettingsPage({
 }) {
   const { projectId } = use(params);
   const router = useRouter();
-  const { toast } = useToast();
+
   
   const [project, setProject] = useState<Repository | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  // const [saving, setSaving] = useState(false);
+  const [savingBasicSettings, setSavingBasicSettings] = useState(false);
+  const [savingScanSettings, setSavingScanSettings] = useState(false);
+  const [savingIssueSettings, setSavingIssueSettings] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
 
 
@@ -130,11 +126,12 @@ export default function ProjectSettingsPage({
     } catch (err: any) {
       console.error('Error loading project:', err);
       setError(err.message || "Failed to load project");
-      toast({
-        title: "Error",
-        description: err.message || "Failed to load project settings",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to load project settings</strong>
+           <p>{err.message}</p>
+        </div>
+    );
     } finally {
       setLoading(false);
     }
@@ -144,7 +141,7 @@ export default function ProjectSettingsPage({
     if (!project) return;
 
     try {
-      setSaving(true);
+      setSavingBasicSettings(true);
       setError(null);
 
       const updates: any = {};
@@ -153,52 +150,58 @@ export default function ProjectSettingsPage({
       if (status !== project.status) updates.status = status;
 
       if (Object.keys(updates).length === 0) {
-        toast({
-          title: "No Changes",
-          description: "No changes to save",
-        });
+        toast(
+          <div>
+            <strong>No Changes</strong>
+            <p>No changes to save</p>
+          </div>
+);
         return;
       }
 
       const updated = await repositoriesApi.update(projectId, updates);
       setProject(updated);
       
-      toast({
-        title: "Success",
-        description: "Basic settings saved successfully",
-      });
+      toast.success( "Basic settings saved successfully");
     } catch (err: any) {
       console.error('Error saving basic settings:', err);
       setError(err.message || "Failed to save changes");
-      toast({
-        title: "Error",
-        description: err.message || "Failed to save changes",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to save changes</strong>
+          <p>{err.message}</p>
+        </div>
+        );
     } finally {
-      setSaving(false);
+      setSavingBasicSettings(false);
     }
   };
 
-  const handleSaveSettings = async () => {
+
+
+  const handleSaveScanSettings = async () => {
     try {
-      setSaving(true);
+      setSavingScanSettings(true);
       setError(null);
 
-      // Save settings
-      const response = await apiFetch(`/repositories/${projectId}/settings`, {
+      const scanSettingsOnly = {
+        auto_scan_enabled: settings.auto_scan_enabled,
+        scan_on_push: settings.scan_on_push,
+        scan_on_pr: settings.scan_on_pr,
+        branch_filter: settings.branch_filter,
+        excluded_branches: settings.excluded_branches,
+        default_scan_type: settings.default_scan_type,
+      };
+
+      await apiFetch(`/repositories/${projectId}/settings`, {
         method: "PATCH",
         requireAuth: true,
-        body: JSON.stringify(settings),
+        body: JSON.stringify(scanSettingsOnly),
       });
 
-      // Update original settings to track future changes
       setOriginalSettings(settings);
 
-      // If auto-scan was enabled and webhook doesn't exist, it should be auto-registered by backend
-      // Refresh webhook status
       if (settings.auto_scan_enabled && webhookStatus !== "active") {
-        // Give backend a moment to register webhook
         setTimeout(async () => {
           try {
             const settingsResponse = await apiFetch(`/repositories/${projectId}/settings`, {
@@ -211,20 +214,53 @@ export default function ProjectSettingsPage({
         }, 1000);
       }
 
-      toast({
-        title: "Success",
-        description: "Settings saved successfully",
-      });
+      toast.success("Auto-scan settings saved successfully");
     } catch (err: any) {
-      console.error('Error saving settings:', err);
-      setError(err.message || "Failed to save settings");
-      toast({
-        title: "Error",
-        description: err.message || "Failed to save settings",
-        variant: "destructive",
-      });
+      console.error('Error saving scan settings:', err);
+      setError(err.message || "Failed to save auto-scan settings");
+      toast.error(
+        <div>
+          <strong>Failed to save auto-scan settings</strong>  
+          <p>{err.message}</p>
+        </div>
+      );
     } finally {
-      setSaving(false);
+      setSavingScanSettings(false);
+    }
+  };
+
+  const handleSaveIssueSettings = async () => {
+    try {
+      setSavingIssueSettings(true);
+      setError(null);
+
+      const issueSettingsOnly = {
+        auto_create_issues: settings.auto_create_issues,
+        issue_severity_threshold: settings.issue_severity_threshold,
+        issue_labels: settings.issue_labels,
+        issue_assignees: settings.issue_assignees,
+      };
+
+      await apiFetch(`/repositories/${projectId}/settings`, {
+        method: "PATCH",
+        requireAuth: true,
+        body: JSON.stringify(issueSettingsOnly),
+      });
+
+      setOriginalSettings(settings);
+
+      toast.success("Issue settings saved successfully");
+    } catch (err: any) {
+      console.error('Error saving issue settings:', err);
+      setError(err.message || "Failed to save issue settings");
+      toast.error(
+        <div>
+          <strong>Failed to save issue settings</strong>
+          <p>{err.message}</p>
+        </div>
+      );
+    } finally {
+      setSavingIssueSettings(false);
     }
   };
 
@@ -240,21 +276,19 @@ export default function ProjectSettingsPage({
 
       if (response.success) {
         setWebhookStatus("active");
-        toast({
-          title: "Success",
-          description: "Webhook registered successfully",
-        });
+        toast.success("Webhook registered successfully");
       } else {
         throw new Error(response.error || "Failed to register webhook");
       }
     } catch (err: any) {
       console.error('Error registering webhook:', err);
       setError(err.message || "Failed to register webhook");
-      toast({
-        title: "Error",
-        description: err.message || "Failed to register webhook",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to register webhook</strong>
+          <p>{err.message}</p>
+        </div>
+      );
     } finally {
       setRegisteringWebhook(false);
     }
@@ -294,6 +328,21 @@ export default function ProjectSettingsPage({
     });
   };
 
+  // Detect changes for each section independently
+  const hasScanSettingsChanges = 
+    settings.auto_scan_enabled !== originalSettings.auto_scan_enabled ||
+    settings.scan_on_push !== originalSettings.scan_on_push ||
+    settings.scan_on_pr !== originalSettings.scan_on_pr ||
+    JSON.stringify(settings.branch_filter) !== JSON.stringify(originalSettings.branch_filter) ||
+    JSON.stringify(settings.excluded_branches) !== JSON.stringify(originalSettings.excluded_branches) ||
+    settings.default_scan_type !== originalSettings.default_scan_type;
+
+  const hasIssueSettingsChanges =
+    settings.auto_create_issues !== originalSettings.auto_create_issues ||
+    settings.issue_severity_threshold !== originalSettings.issue_severity_threshold ||
+    JSON.stringify(settings.issue_labels) !== JSON.stringify(originalSettings.issue_labels) ||
+    JSON.stringify(settings.issue_assignees) !== JSON.stringify(originalSettings.issue_assignees);
+
   const hasBasicChanges =
     project &&
     (displayName !== project.name ||
@@ -310,49 +359,11 @@ export default function ProjectSettingsPage({
     );
   }
 
-  if (error && !project) {
-    return (
-      <div className="space-y-6 px-4 sm:px-6">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/dashboard/projects">Projects</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Settings</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
 
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6 max-w-4xl px-4 sm:px-6">
-      {/* Breadcrumbs */}
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/dashboard/projects">Projects</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink href={`/dashboard/projects/${projectId}`}>
-              {project?.name}
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Settings</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
+
 
       {/* Header */}
       <div>
@@ -439,8 +450,8 @@ export default function ProjectSettingsPage({
           </div>
 
           <div className="flex gap-2 pt-4">
-            <Button onClick={handleSaveBasic} disabled={!hasBasicChanges || saving}>
-              {saving ? (
+            <Button onClick={handleSaveBasic} disabled={!hasBasicChanges || savingBasicSettings}>
+              {savingBasicSettings ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Saving...
@@ -638,11 +649,11 @@ export default function ProjectSettingsPage({
           )}
 
           <Button 
-            onClick={handleSaveSettings} 
-            disabled={saving || !hasSettingsChanges} 
+            onClick={handleSaveScanSettings} 
+            disabled={savingScanSettings || !hasScanSettingsChanges} 
             className="w-full"
           >
-            {saving ? (
+            {savingScanSettings ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Saving...
@@ -740,11 +751,11 @@ export default function ProjectSettingsPage({
           )}
 
           <Button 
-            onClick={handleSaveSettings} 
-            disabled={saving || !hasSettingsChanges} 
+            onClick={handleSaveIssueSettings} 
+            disabled={savingIssueSettings || !hasIssueSettingsChanges} 
             className="w-full"
           >
-            {saving ? (
+            {savingIssueSettings ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Saving...

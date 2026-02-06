@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Loader2, Trash2, AlertTriangle } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { repositoriesApi } from "@/lib/api/repositories";
 
 interface DisconnectProjectDialogProps {
@@ -35,7 +35,7 @@ export function DisconnectProjectDialog({
   redirectTo,
 }: DisconnectProjectDialogProps) {
   const [deleting, setDeleting] = useState(false);
-  const { toast } = useToast();
+  
 
   // Handle the delete logic
   const handleDelete = async (e: React.MouseEvent) => {
@@ -46,10 +46,7 @@ export function DisconnectProjectDialog({
       setDeleting(true);
       await repositoriesApi.delete(project.id);
 
-      toast({
-        title: "Project disconnected",
-        description: `${project.name} has been successfully disconnected.`,
-      });
+      toast.success("Project disconnected");
 
       if (onSuccess) {
         onSuccess(project.id);
@@ -64,11 +61,12 @@ export function DisconnectProjectDialog({
         onOpenChange(false);
       }
     } catch (err: any) {
-      toast({
-        title: "Error",
-        description: err.message || "Failed to delete project",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to disconnect project</strong>
+          <p>{err.message}</p>
+        </div>
+      );
     } finally {
       setDeleting(false);
     }

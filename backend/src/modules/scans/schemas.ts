@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 export const startScanSchema = z.object({
     branch: z.string().optional().default('main'),
-    scan_type: z.enum(['quick', 'full', 'custom']).optional().default('full'),
+    scan_type: z.enum(['quick', 'full']).optional().default('full'), // ✅ FIX: Removed 'custom' - only quick/full supported
 });
 
 export const scanHistorySchema = z.object({

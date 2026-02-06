@@ -1,16 +1,14 @@
-// ===================================================================
-// src/shared/queue/job-queue.ts (UPDATED - Fix Stalling)
-// ===================================================================
 import { Queue, Worker, Job, QueueEvents } from 'bullmq';
 import type { FastifyInstance } from 'fastify';
 import { env } from '../../env';
 
 export interface ScanJobPayload {
   scanId: string;
+  workspaceId: string;
   repositoryId: string;
   userId: string;
   branch: string;
-  scanType: 'quick' | 'full' | 'custom';
+  scanType: 'quick' | 'full'; // ✅ FIX: Removed 'custom'
   enabledScanners: {
     sast: boolean;
     sca: boolean;

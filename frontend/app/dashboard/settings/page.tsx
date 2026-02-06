@@ -44,14 +44,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from "sonner"
 import { useWorkspace } from "@/hooks/use-workspace"
 import { useWorkspaceChangeListener } from "@/hooks/use-workspace-change-listener"
 
 export default function SettingsPage() {
   const { theme: currentTheme, setTheme } = useTheme()
   const { user, refreshUser, logout } = useAuth()
-  const { toast } = useToast()
   const { workspace } = useWorkspace()
   const [mounted, setMounted] = useState(false)
   
@@ -91,13 +90,14 @@ export default function SettingsPage() {
       setLoadingIntegrations(true)
       const { integrations: data } = await integrationsApi.getIntegrations()
       setIntegrations(data)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to load integrations:", error)
-      toast({
-        title: "Failed to load integrations",
-        description: "Please try again",
-        variant: "destructive",
-      })
+      toast.error(
+        <div>
+          <strong>Failed to load integrations</strong>
+          <p>{error.message || 'Please try again'}</p>
+        </div>
+      )
     } finally {
       setLoadingIntegrations(false)
     }
@@ -108,17 +108,15 @@ export default function SettingsPage() {
       setSyncing(true)
       await authApi.resyncGitHub()
       await refreshUser()
-      toast({
-        title: "Success",
-        description: "GitHub data synced successfully",
-      })
+      toast.success("GitHub data synced successfully")
     } catch (error: any) {
       console.error("Resync failed:", error)
-      toast({
-        title: "Sync failed",
-        description: error.message || "Failed to sync GitHub data",
-        variant: "destructive",
-      })
+      toast.error(
+        <div>
+          <strong>Sync failed</strong>
+          <p>{error.message}</p>
+        </div>
+      )
     } finally {
       setSyncing(false)
     }
@@ -126,21 +124,19 @@ export default function SettingsPage() {
 
   const handleDeleteAccount = async () => {
     if (deleteUsername !== username) {
-      toast({
-        title: "Username mismatch",
-        description: "The username you entered does not match your account",
-        variant: "destructive",
-      })
+      toast.error(
+        <div>
+          <strong>Username mismatch</strong>
+          <p>The username you entered does not match your account</p>
+        </div>
+      )
       return
     }
 
     try {
       setDeleting(true)
       await authApi.deleteAccount(deleteUsername)
-      toast({
-        title: "Success",
-        description: "Account deleted successfully",
-      })
+      toast.success("Account deleted successfully")
       setDeleteDialogOpen(false)
       
       // Sign out and redirect
@@ -149,11 +145,12 @@ export default function SettingsPage() {
       }, 1000)
     } catch (error: any) {
       console.error("Delete account failed:", error)
-      toast({
-        title: "Delete failed",
-        description: error.message || "Failed to delete account",
-        variant: "destructive",
-      })
+      toast.error(
+        <div>
+          <strong>Delete failed</strong>
+          <p>{error.message}</p>
+        </div>
+      )
     } finally {
       setDeleting(false)
     }
@@ -166,10 +163,7 @@ export default function SettingsPage() {
       setDisconnecting(true)
       const result = await integrationsApi.disconnectIntegration(disconnectProvider)
       
-      toast({
-        title: "Success",
-        description: result.message,
-      })
+      toast.success(result.message)
       setDisconnectDialogOpen(false)
       setDisconnectProvider(null)
       
@@ -178,21 +172,24 @@ export default function SettingsPage() {
       
       // If GitHub was disconnected, sign out
       if (result.requiresSignOut) {
-        toast({
-          title: "Info",
-          description: "Signing you out...",
-        })
+        toast(
+          <div>
+            <strong>Signing you out</strong>
+            <p>Signing you out...</p>
+          </div>
+        )
         setTimeout(() => {
           logout()
         }, 1500)
       }
     } catch (error: any) {
       console.error("Disconnect failed:", error)
-      toast({
-        title: "Disconnect failed",
-        description: error.message || "Failed to disconnect integration",
-        variant: "destructive",
-      })
+      toast.error(
+        <div>
+          <strong>Disconnect failed</strong>
+          <p>{error.message}</p>
+        </div>
+      )
     } finally {
       setDisconnecting(false)
     }

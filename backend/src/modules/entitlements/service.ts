@@ -60,6 +60,7 @@ export class EntitlementsService {
    * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
    *                  The parameter name is kept as userId for backward compatibility
    *                  during migration. Usage tracking tables still use user_id column.
+   * @deprecated Use checkMonthlyLimit() instead. Concurrent scans are now checked via direct database query.
    */
   async checkScanLimit(
     userId: string,
@@ -88,21 +89,51 @@ export class EntitlementsService {
       };
     }
 
-    // Check concurrent limit
-    if (usage.concurrent_scans >= limits.concurrent_scans) {
+    // ✅ FIX: Removed concurrent limit check - now handled by direct database query
+    // This prevents issues where the concurrent_scans counter gets out of sync
+
+    return {
+      allowed: true,
+      type: 'monthly',
+      current: usage.scans_used,
+      limit: monthlyUnlimited ? Infinity : limits.scans_per_month,
+      remaining: monthlyUnlimited
+        ? Infinity
+        : limits.scans_per_month - usage.scans_used,
+    };
+  }
+
+  /**
+   * Check monthly scan limit only (concurrent checked separately via database)
+   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
+   */
+  async checkMonthlyLimit(
+    userId: string,
+    plan: string
+  ): Promise<{
+    allowed: boolean;
+    current: number;
+    limit: number;
+    remaining: number;
+    message?: string;
+  }> {
+    const limits = getLimits(plan as any);
+    const usage = await this.getOrCreateUsageRecord(userId, plan);
+
+    // Check monthly limit only
+    const monthlyUnlimited = isUnlimited(limits.scans_per_month);
+    if (!monthlyUnlimited && usage.scans_used >= limits.scans_per_month) {
       return {
         allowed: false,
-        type: 'concurrent',
-        current: usage.concurrent_scans,
-        limit: limits.concurrent_scans,
+        current: usage.scans_used,
+        limit: limits.scans_per_month,
         remaining: 0,
-        message: `Concurrent scan limit reached. ${plan} plan allows ${limits.concurrent_scans} concurrent scans.`,
+        message: `Monthly scan limit reached. ${plan} plan allows ${limits.scans_per_month} scans per month.`,
       };
     }
 
     return {
       allowed: true,
-      type: 'monthly',
       current: usage.scans_used,
       limit: monthlyUnlimited ? Infinity : limits.scans_per_month,
       remaining: monthlyUnlimited
@@ -120,32 +151,48 @@ export class EntitlementsService {
   async trackScanStart(userId: string, scanId: string): Promise<void> {
     const { year, month } = this.getCurrentPeriod();
 
-    // Increment both monthly and concurrent
-    await this.fastify.supabase.rpc('increment_scan_usage', {
-      p_user_id: userId,
-      p_year: year,
-      p_month: month,
-    });
+    // ✅ FIX: Only increment monthly counter
+    // Concurrent scans are now tracked via database scan status
+    const { data: usage } = await this.fastify.supabase
+      .from('usage_tracking')
+      .select('scans_used')
+      .eq('user_id', userId)
+      .eq('period_year', year)
+      .eq('period_month', month)
+      .maybeSingle();
+
+    if (usage) {
+      // Update existing record
+      await this.fastify.supabase
+        .from('usage_tracking')
+        .update({ scans_used: usage.scans_used + 1 })
+        .eq('user_id', userId)
+        .eq('period_year', year)
+        .eq('period_month', month);
+    } else {
+      // Create new record
+      await this.getOrCreateUsageRecord(userId, 'Free'); // Will create with scans_used: 0
+      await this.fastify.supabase
+        .from('usage_tracking')
+        .update({ scans_used: 1 })
+        .eq('user_id', userId)
+        .eq('period_year', year)
+        .eq('period_month', month);
+    }
 
     // Audit trail
     await this.logUsage(userId, 'scan', scanId, 'start');
   }
 
   /**
-   * Decrement concurrent scans when scan completes
+   * Log scan completion for audit trail
    * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
    *                  The parameter name is kept as userId for backward compatibility
    *                  during migration. Usage tracking tables still use user_id column.
    */
   async trackScanComplete(userId: string, scanId: string): Promise<void> {
-    const { year, month } = this.getCurrentPeriod();
-
-    await this.fastify.supabase.rpc('decrement_concurrent_scans', {
-      p_user_id: userId,
-      p_year: year,
-      p_month: month,
-    });
-
+    // ✅ FIX: Only log completion for audit trail
+    // No counter decrement needed - concurrent scans tracked via database scan status
     await this.logUsage(userId, 'scan', scanId, 'complete');
   }
 

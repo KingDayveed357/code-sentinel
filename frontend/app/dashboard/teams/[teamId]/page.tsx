@@ -58,10 +58,9 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { teamsApi, type TeamMember, type TeamInvitation } from "@/lib/api/teams";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 
 export default function TeamManagementPage({params}: {params: Promise<{teamId: string}>}) {
-  const { toast } = useToast();
   const { teamId } = use(params);
 
   // State
@@ -116,11 +115,12 @@ export default function TeamManagementPage({params}: {params: Promise<{teamId: s
       console.log("Members:", data.members);
       setInvitations(data.invitations);
     } catch (error: any) {
-      toast({
-        title: "Failed to Load Team",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Load Team</strong>
+          <p>{error.message}</p>
+        </div>
+      );
     } finally {
       setLoading(false);
     }
@@ -141,16 +141,14 @@ export default function TeamManagementPage({params}: {params: Promise<{teamId: s
       setInviteEmail("");
       setInviteRole("developer");
 
-      toast({
-        title: "Invitation Sent",
-        description: `Invitation sent to ${inviteEmail}`,
-      });
+      toast.success(`Invitation sent to ${inviteEmail}`);
     } catch (error: any) {
-      toast({
-        title: "Failed to Send Invitation",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Send Invitation</strong>
+          <p>{error.message}</p>
+        </div>
+      );
     } finally {
       setInviting(false);
     }
@@ -166,16 +164,14 @@ export default function TeamManagementPage({params}: {params: Promise<{teamId: s
       setMembers(members.filter((m) => m.id !== removeMemberDialog.member!.id));
       setRemoveMemberDialog({ open: false, member: null });
 
-      toast({
-        title: "Member Removed",
-        description: `${removeMemberDialog.member.users.full_name} has been removed from the team`,
-      });
+      toast.success(`${removeMemberDialog.member.users.full_name} has been removed from the team`);
     } catch (error: any) {
-      toast({
-        title: "Failed to Remove Member",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Remove Member</strong>
+          <p>{error.message}</p>
+        </div>
+      );
     } finally {
       setRemoving(false);
     }
@@ -201,16 +197,14 @@ export default function TeamManagementPage({params}: {params: Promise<{teamId: s
 
       setUpdateRoleDialog({ open: false, member: null });
 
-      toast({
-        title: "Role Updated",
-        description: `${updateRoleDialog.member.users.full_name}'s role changed to ${roleToUpdate}`,
-      });
+      toast.success(`${updateRoleDialog.member.users.full_name}'s role changed to ${roleToUpdate}`);
     } catch (error: any) {
-      toast({
-        title: "Failed to Update Role",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Update Role</strong>
+          <p>{error.message}</p>
+        </div>
+      );
     } finally {
       setUpdatingRole(false);
     }
@@ -222,10 +216,7 @@ export default function TeamManagementPage({params}: {params: Promise<{teamId: s
     setCopiedInvite(invitation.id);
     setTimeout(() => setCopiedInvite(null), 2000);
 
-    toast({
-      title: "Link Copied",
-      description: "Invitation link copied to clipboard",
-    });
+    toast.success("Invitation link copied to clipboard");
   };
 
   const getRoleBadge = (role: string) => {

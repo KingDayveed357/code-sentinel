@@ -207,12 +207,24 @@ export async function resolveWorkspace(
             workspace.team?.team_members?.some((m: any) => m.user_id === userId && m.status === 'active');
 
         if (!isPersonalOwner && !isTeamMember) {
-            request.log.warn({ workspaceId, userId }, "Access denied to workspace");
-            throw request.server.httpErrors.forbidden('Access denied to workspace');
+            request.log.warn({ workspaceId, userId }, "Access denied to workspace - not a member");
+            throw request.server.httpErrors.forbidden('Not a member of this workspace');
+        }
+
+        // Attach user's role for authorization checks
+        if (workspace.type === 'team') {
+            const membership = workspace.team?.team_members?.find((m: any) => m.user_id === userId);
+            (request as any).userRole = membership?.role || 'member';
+        } else {
+            (request as any).userRole = 'owner';
         }
 
         request.workspace = workspace;
-        request.log.debug({ workspaceId: workspace.id, type: workspace.type }, "Workspace resolved");
+        request.log.debug({ 
+            workspaceId: workspace.id, 
+            type: workspace.type,
+            userRole: (request as any).userRole
+        }, "Workspace resolved with authorization");
     } else {
         // Default: Get or create personal workspace
         let { data: personalWorkspace, error: fetchError } = await request.server.supabase

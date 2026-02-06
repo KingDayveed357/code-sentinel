@@ -1,7 +1,8 @@
 // hooks/use-vulnerabilities.ts
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { vulnerabilitiesApi, type Vulnerability } from "@/lib/api/vulnerabilities";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
+import { Divide } from "lucide-react";
 
 export interface VulnerabilityFilters {
   severity?: string;
@@ -52,13 +53,24 @@ export function useVulnerabilities(
     refetchInterval,
   } = options;
 
-  const { toast } = useToast();
+
   const [vulnerabilities, setVulnerabilities] = useState<Vulnerability[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
+  
+  // Prevent duplicate fetches
+  const fetchingRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const fetchVulnerabilities = useCallback(async () => {
     if (!scanId && !projectId) {
@@ -66,7 +78,13 @@ export function useVulnerabilities(
       return;
     }
 
+    // Prevent duplicate calls
+    if (fetchingRef.current) {
+      return;
+    }
+
     try {
+      fetchingRef.current = true;
       setLoading(true);
       setError(null);
 
@@ -90,18 +108,26 @@ export function useVulnerabilities(
         throw new Error("Project-level queries not yet implemented");
       }
 
-      setVulnerabilities(response.vulnerabilities);
-      setTotal(response.total);
-      setPage(response.page);
-      setPages(response.pages);
+      // Only update state if component is still mounted
+      if (mountedRef.current) {
+        setVulnerabilities(response.vulnerabilities);
+        setTotal(response.total);
+        setPage(response.page);
+        setPages(response.pages);
+      }
     } catch (err: any) {
       const errorMessage = err.message || "Failed to fetch vulnerabilities";
-      setError(errorMessage);
+      if (mountedRef.current) {
+        setError(errorMessage);
+      }
       console.error("Error fetching vulnerabilities:", err);
     } finally {
-      setLoading(false);
+      fetchingRef.current = false;
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, [scanId, projectId, type, filters]);
+  }, [scanId, projectId, type, JSON.stringify(filters)]);
 
   const refetch = useCallback(async () => {
     await fetchVulnerabilities();
@@ -127,16 +153,9 @@ export function useVulnerabilities(
           prev.map((vuln) => (vuln.id === id ? updated : vuln))
         );
 
-        toast({
-          title: "Status Updated",
-          description: `Vulnerability marked as ${status.replace("_", " ")}`,
-        });
+        toast.success(`Vulnerability marked as ${status.replace("_", " ")}`);
       } catch (err: any) {
-        toast({
-          title: "Update Failed",
-          description: err.message || "Failed to update vulnerability status",
-          variant: "destructive",
-        });
+        toast.error("Update Failed")
         throw err;
       }
     },
@@ -155,11 +174,7 @@ export function useVulnerabilities(
         );
         return details;
       } catch (err: any) {
-        toast({
-          title: "Failed to Load Details",
-          description: err.message || "Could not fetch vulnerability details",
-          variant: "destructive",
-        });
+        toast.error("Failed to Load Details");
         return null;
       }
     },
@@ -208,62 +223,76 @@ export function useScanVulnerabilities(
   });
 }
 
-// Hook for fetching all vulnerability types for a scan
+// Hook for fetching all vulnerability types for a scan - FIXED VERSION
 export function useAllScanVulnerabilities(scanId: string) {
   const [allVulnerabilities, setAllVulnerabilities] = useState<Vulnerability[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const sast = useVulnerabilities({ scanId, type: "sast", autoFetch: false });
-  const sca = useVulnerabilities({ scanId, type: "sca", autoFetch: false });
-  const secrets = useVulnerabilities({ scanId, type: "secrets", autoFetch: false });
-  const iac = useVulnerabilities({ scanId, type: "iac", autoFetch: false });
-  const container = useVulnerabilities({ scanId, type: "container", autoFetch: false });
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      await Promise.all([
-        sast.refetch(),
-        sca.refetch(),
-        secrets.refetch(),
-        iac.refetch(),
-        container.refetch(),
-      ]);
-
-      const combined = [
-        ...sast.vulnerabilities,
-        ...sca.vulnerabilities,
-        ...secrets.vulnerabilities,
-        ...iac.vulnerabilities,
-        ...container.vulnerabilities,
-      ];
-
-      setAllVulnerabilities(combined);
-    } catch (err: any) {
-      setError(err.message || "Failed to fetch vulnerabilities");
-    } finally {
-      setLoading(false);
-    }
-  }, [sast, sca, secrets, iac, container]);
+  
+  // Track if we've done the initial fetch
+  const initialFetchDone = useRef(false);
+  const fetchingRef = useRef(false);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    fetchAll();
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
+
+  const fetchAll = useCallback(async () => {
+    // Prevent duplicate calls
+    if (fetchingRef.current) {
+      return;
+    }
+
+    if (!scanId) {
+      setError("Scan ID is required");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      fetchingRef.current = true;
+      setLoading(true);
+      setError(null);
+
+      // ✅ TRUST FIX: Use unified endpoint (1 call instead of 5)
+      const response = await vulnerabilitiesApi.getVulnerabilitiesByScan(
+        scanId,
+        {} // No filters - get all vulnerabilities
+      );
+
+      if (mountedRef.current) {
+        // Backend already deduplicates - no client-side dedup needed
+        setAllVulnerabilities(response.vulnerabilities);
+        initialFetchDone.current = true;
+      }
+    } catch (err: any) {
+      console.error("Error fetching all vulnerabilities:", err);
+      if (mountedRef.current) {
+        setError(err.message || "Failed to fetch vulnerabilities");
+      }
+    } finally {
+      fetchingRef.current = false;
+      if (mountedRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [scanId]);
+
+  // Only fetch once on mount
+  useEffect(() => {
+    if (!initialFetchDone.current) {
+      fetchAll();
+    }
+  }, [fetchAll]);
 
   return {
     vulnerabilities: allVulnerabilities,
-    loading: loading || sast.loading || sca.loading || secrets.loading || iac.loading || container.loading,
-    error: error || sast.error || sca.error || secrets.error || iac.error || container.error,
+    loading,
+    error,
     refetch: fetchAll,
-    byType: {
-      sast: sast.vulnerabilities,
-      sca: sca.vulnerabilities,
-      secrets: secrets.vulnerabilities,
-      iac: iac.vulnerabilities,
-      container: container.vulnerabilities,
-    },
   };
 }

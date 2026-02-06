@@ -185,7 +185,7 @@ const ScanItem = memo(function ScanItem({
         asChild 
         className="opacity-0 group-hover:opacity-100 transition-opacity duration-200"
       >
-        <Link href={`/dashboard/projects/${scan.repo_id}/scans/${scan.id}/report`}>
+        <Link href={`/dashboard/scans/${scan.id}`}>
           View Report
         </Link>
       </Button>

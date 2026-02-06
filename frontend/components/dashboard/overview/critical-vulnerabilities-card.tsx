@@ -242,7 +242,7 @@ const ActionMenu = memo(function ActionMenu({
         <div className="px-2 py-1.5 text-sm font-semibold">Actions</div>
         <div className="h-px bg-border my-1" />
         <Link 
-          href={`/dashboard/projects/${vuln.repo_id}/scans/${vuln.scan_id}/report`}
+          href={`/dashboard/scans/${vuln.scan_id}`}
           className="flex items-center px-2 py-2 text-sm hover:bg-accent rounded cursor-pointer transition-colors duration-150"
           onClick={onClose}
         >

@@ -1,8 +1,7 @@
-
 // components/report/scan-logs.tsx
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
 
@@ -18,11 +17,53 @@ interface ScanLogsProps {
 
 export function ScanLogs({ logs }: ScanLogsProps) {
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [userHasScrolled, setUserHasScrolled] = useState(false);
+  const [isNearBottom, setIsNearBottom] = useState(true);
 
-  // Auto-scroll to bottom when new logs arrive
+  // Check if user is near the bottom of the scroll container
+  const checkScrollPosition = () => {
+    if (!scrollContainerRef.current) return;
+    
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    
+    // Consider "near bottom" if within 100px
+    const nearBottom = distanceFromBottom < 100;
+    setIsNearBottom(nearBottom);
+    
+    // If user scrolls up more than 100px, mark as manual scroll
+    if (distanceFromBottom > 100) {
+      setUserHasScrolled(true);
+    } else {
+      // User scrolled back to bottom, resume auto-scroll
+      setUserHasScrolled(false);
+    }
+  };
+
+  // Handle scroll events
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    container.addEventListener('scroll', checkScrollPosition);
+    return () => container.removeEventListener('scroll', checkScrollPosition);
+  }, []);
+
+  // Auto-scroll only if user hasn't manually scrolled away or is near bottom
+  useEffect(() => {
+    // Only auto-scroll if:
+    // 1. User hasn't scrolled up (userHasScrolled is false), OR
+    // 2. User is already near the bottom (isNearBottom is true)
+    if ((!userHasScrolled || isNearBottom) && logs.length > 0) {
+      // Use a small delay to ensure DOM has updated
+      const timer = setTimeout(() => {
+        logsEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      }, 50);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [logs.length, userHasScrolled, isNearBottom]); // Only depend on logs.length, not logs array
 
   const getLogIcon = (level: string) => {
     switch (level) {
@@ -65,11 +106,19 @@ export function ScanLogs({ logs }: ScanLogsProps) {
         </CardTitle>
         <CardDescription className="text-sm">
           Real-time updates from the scanning process
+          {userHasScrolled && !isNearBottom && (
+            <span className="ml-2 text-xs text-muted-foreground">
+              • Auto-scroll paused
+            </span>
+          )}
         </CardDescription>
       </CardHeader>
 
       <CardContent className="px-4 sm:px-6">
-        <div className="relative max-h-[400px] overflow-y-auto rounded-lg border bg-muted/30 backdrop-blur-sm">
+        <div 
+          ref={scrollContainerRef}
+          className="relative max-h-[400px] overflow-y-auto rounded-lg border bg-muted/30 backdrop-blur-sm scroll-smooth"
+        >
           {logs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 px-4">
               {/* Clean loading animation */}
@@ -244,6 +293,11 @@ export function ScanLogs({ logs }: ScanLogsProps) {
 
         .overflow-y-auto::-webkit-scrollbar-thumb:hover {
           background: hsl(var(--muted-foreground) / 0.5);
+        }
+
+        /* Smooth scrolling */
+        .scroll-smooth {
+          scroll-behavior: smooth;
         }
       `}</style>
     </Card>

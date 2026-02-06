@@ -264,13 +264,13 @@ import {
 import { Users, Plus, Loader2, AlertCircle, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { teamsApi } from "@/lib/api/teams";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useAuth } from "@/hooks/use-auth";
 import { RequireTeamPlan } from "@/components/guards/require-team-plan";
 
 export default function TeamsListPage() {
-  const { toast } = useToast();
+  
   const { workspace, isTeamWorkspace } = useWorkspace();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -296,11 +296,12 @@ export default function TeamsListPage() {
       const data = await teamsApi.list();
       setTeams(data.teams);
     } catch (error: any) {
-      toast({
-        title: "Failed to Load Teams",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Load Teams</strong>
+          <p>{error.message}</p>
+        </div>
+      );
     } finally {
       setLoading(false);
     }
@@ -311,11 +312,12 @@ export default function TeamsListPage() {
 
     // Block creation if user is not the owner of current workspace
     if (workspace?.owner_id !== user?.id) {
-      toast({
-        title: "Cannot Create Team",
-        description: "Only workspace owners can create teams.",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Cannot Create Team</strong>
+          <p>Only workspace owners can create teams.</p>
+        </div>
+      );
       return;
     }
 
@@ -326,16 +328,14 @@ export default function TeamsListPage() {
       setCreateDialogOpen(false);
       setTeamName("");
 
-      toast({
-        title: "Team Created",
-        description: `${teamName} has been created successfully`,
-      });
+      toast.success(`${teamName} has been created successfully`);
     } catch (error: any) {
-      toast({
-        title: "Failed to Create Team",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Create Team</strong>
+          <p>{error.message}</p>
+        </div>
+      );
     } finally {
       setCreating(false);
     }

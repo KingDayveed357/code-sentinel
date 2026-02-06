@@ -31,20 +31,24 @@ import {
   CreditCard,
   Copy,
   Check,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { teamsApi } from "@/lib/api/teams";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import { notifyWorkspaceUpdate } from "@/hooks/use-workspace-refresh";
 
 export default function TeamSettingsPage({
   params,
 }: {
   params: Promise<{ teamId: string }>;
 }) {
-  const { toast } = useToast();
+  
   const router = useRouter();
   const { teamId } = use(params);
+  const { workspace, updateWorkspace } = useWorkspaceStore();
 
   const [loading, setLoading] = useState(true);
   const [team, setTeam] = useState<any>(null);
@@ -54,6 +58,9 @@ export default function TeamSettingsPage({
   const [deleting, setDeleting] = useState(false);
   const [copiedTeamId, setCopiedTeamId] = useState(false);
   const [confirmDeleteName, setConfirmDeleteName] = useState("");
+
+  // Track if current workspace is this team
+  const isCurrentWorkspace = workspace?.id === teamId;
 
   useEffect(() => {
     if (teamId) {
@@ -69,11 +76,12 @@ export default function TeamSettingsPage({
       setTeamName(data.team.name || "Team");
       console.log("Loaded team data:", data);
     } catch (error: any) {
-      toast({
-        title: "Failed to Load Team",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Load Team</strong>
+          <p>{error.message}</p>
+        </div>
+      );
       // Redirect if not authorized
       if (error.message?.includes("forbidden") || error.message?.includes("not found")) {
         router.push("/dashboard/teams");
@@ -88,21 +96,42 @@ export default function TeamSettingsPage({
 
     try {
       setSaving(true);
+
+      // Optimistic update for current workspace
+      if (isCurrentWorkspace) {
+        updateWorkspace(teamId, { name: teamName });
+      }
+
+      // API call to persist changes
       const result = await teamsApi.updateTeam(teamId, { name: teamName });
+      
+      // Update local team state
       setTeam((prev: any) => ({
         ...prev,
         ...result.team,
       }));
-      toast({
-        title: "Team Updated",
-        description: "Team name has been updated successfully",
-      });
+
+      // Notify workspace switcher and all workspace-dependent components
+      // This triggers intelligent refresh across the entire app
+      notifyWorkspaceUpdate(teamId);
+
+      toast.success("Team name has been updated successfully");
+
+      console.log("✅ Team name updated, workspace refresh triggered");
     } catch (error: any) {
-      toast({
-        title: "Failed to Update Team",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      // Rollback optimistic update on error
+      if (isCurrentWorkspace && team.name) {
+        updateWorkspace(teamId, { name: team.name });
+      }
+
+      toast.error(
+        <div>
+          <strong>Failed to Update Team</strong>
+          <p>{error.message}</p>
+        </div>
+      );
+      
+      console.error("❌ Failed to update team:", error);
     } finally {
       setSaving(false);
     }
@@ -112,17 +141,22 @@ export default function TeamSettingsPage({
     try {
       setDeleting(true);
       await teamsApi.deleteTeam(teamId);
-      toast({
-        title: "Team Deleted",
-        description: "The team has been deleted successfully",
-      });
+      
+      // If deleting current workspace, the workspace switcher will handle fallback
+      if (isCurrentWorkspace) {
+        console.log("⚠️ Deleted current workspace, system will redirect to personal workspace");
+      }
+
+      toast.success("The team has been deleted successfully");
+      
       router.push("/dashboard/teams");
     } catch (error: any) {
-      toast({
-        title: "Failed to Delete Team",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Delete Team</strong>
+          <p>{error.message}</p>
+        </div>
+      );
     } finally {
       setDeleting(false);
       setDeleteDialogOpen(false);
@@ -133,10 +167,16 @@ export default function TeamSettingsPage({
     navigator.clipboard.writeText(teamId);
     setCopiedTeamId(true);
     setTimeout(() => setCopiedTeamId(false), 2000);
-    toast({
-      title: "Copied",
-      description: "Team ID copied to clipboard",
-    });
+    toast.success("Team ID copied to clipboard");
+  };
+
+  // Manual refresh trigger for team data
+  const handleRefreshTeam = async () => {
+    await loadTeam();
+    if (isCurrentWorkspace) {
+      notifyWorkspaceUpdate(teamId);
+    }
+    toast.success("Team data has been refreshed");
   };
 
   if (loading) {
@@ -230,13 +270,34 @@ export default function TeamSettingsPage({
             Manage your team settings and configuration
           </p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleRefreshTeam}
+          title="Refresh team data"
+        >
+          <RefreshCw className="h-4 w-4" />
+        </Button>
       </div>
+
+      {/* Active Workspace Indicator */}
+      {isCurrentWorkspace && (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            This is your current active workspace. Changes will be reflected immediately in the workspace switcher.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Team Name */}
       <Card>
         <CardHeader>
           <CardTitle>Team Name</CardTitle>
-          <CardDescription>Change your team's display name</CardDescription>
+          <CardDescription>
+            Change your team's display name
+            {isCurrentWorkspace && " (updates workspace switcher in real-time)"}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
@@ -248,13 +309,21 @@ export default function TeamSettingsPage({
               disabled={!canEdit}
               placeholder="Enter team name"
             />
+            {isCurrentWorkspace && teamName !== team.name && (
+              <p className="text-xs text-muted-foreground">
+                💡 Changes will update the workspace switcher without page reload
+              </p>
+            )}
           </div>
           {canEdit && (
-            <Button onClick={handleUpdateTeamName} disabled={saving || teamName === team.name}>
+            <Button 
+              onClick={handleUpdateTeamName} 
+              disabled={saving || teamName === team.name || !teamName.trim()}
+            >
               {saving ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
+                  Saving & Syncing...
                 </>
               ) : (
                 "Save Changes"
@@ -353,6 +422,7 @@ export default function TeamSettingsPage({
               <AlertDescription>
                 Deleting a team will permanently remove all team data, members, projects, scans, and findings.
                 This action cannot be undone.
+                {isCurrentWorkspace && " You will be redirected to your personal workspace."}
               </AlertDescription>
             </Alert>
             <Button
@@ -432,4 +502,3 @@ export default function TeamSettingsPage({
     </div>
   );
 }
-

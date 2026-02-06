@@ -110,6 +110,21 @@ export async function getWorkspaceRepositories(
 }> {
     const { search, provider, private: isPrivate, status, limit = 20, offset = 0 } = options;
 
+    // ✅ FIX: Check if status is a scan status (not a repository status)
+    const scanStatuses = ["completed", "running", "normalizing", "ai_enriching", "failed", "pending", "cancelled", "never_scanned", "processing"];
+    const repositoryStatuses = ["active", "inactive", "error"];
+    const isScanStatus = status && scanStatuses.includes(status);
+    const isRepositoryStatus = status && repositoryStatuses.includes(status);
+
+    // For scan status filtering, we need to use a different approach
+    if (isScanStatus) {
+        return filterRepositoriesByScanStatus(
+            fastify,
+            workspaceId,
+            { search, provider, private: isPrivate, status, limit, offset }
+        );
+    }
+
     let query = fastify.supabase
         .from("repositories")
         .select("*", { count: "exact" })
@@ -128,7 +143,7 @@ export async function getWorkspaceRepositories(
         query = query.eq("private", isPrivate);
     }
 
-    if (status) {
+    if (isRepositoryStatus) {
         query = query.eq("status", status);
     }
 
@@ -144,6 +159,86 @@ export async function getWorkspaceRepositories(
     return {
         repositories: (data as DatabaseRepository[]) || [],
         total: count || 0,
+        limit,
+        offset,
+    };
+}
+
+/**
+ * Filter repositories by their latest scan status
+ */
+async function filterRepositoriesByScanStatus(
+    fastify: FastifyInstance,
+    workspaceId: string,
+    options: {
+        search?: string;
+        provider?: string;
+        private?: boolean;
+        status?: string;
+        limit: number;
+        offset: number;
+    }
+): Promise<{
+    repositories: DatabaseRepository[];
+    total: number;
+    limit: number;
+    offset: number;
+}> {
+    const { search, provider, private: isPrivate, status, limit, offset } = options;
+
+    // Step 1: Get all repositories with their latest scan status (ordered by scan date desc)
+    let repoQuery = fastify.supabase
+        .from("repositories")
+        .select("*, scans:scans(status, created_at) order by scans(created_at.desc) limit 1")
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false });
+
+    if (search) {
+        repoQuery = repoQuery.or(`name.ilike.%${search}%,full_name.ilike.%${search}%`);
+    }
+
+    if (provider) {
+        repoQuery = repoQuery.eq("provider", provider);
+    }
+
+    if (isPrivate !== undefined) {
+        repoQuery = repoQuery.eq("private", isPrivate);
+    }
+
+    const { data: repos, error: repoError } = await repoQuery;
+
+    if (repoError) {
+        fastify.log.error({ error: repoError, workspaceId }, "Failed to fetch repositories with scans");
+        throw fastify.httpErrors.internalServerError("Failed to fetch repositories");
+    }
+
+    // Step 2: Filter repositories based on their latest scan status
+    let filteredRepos = (repos || []) as any[];
+
+    if (status) {
+        filteredRepos = filteredRepos.filter((repo) => {
+            const scans = repo.scans as any[];
+            
+            if (status === "never_scanned") {
+                return !scans || scans.length === 0;
+            }
+
+            if (scans && scans.length > 0) {
+                const latestScan = scans[0]; // Already limited to 1 with most recent first
+                return latestScan.status === status;
+            }
+
+            return false;
+        });
+    }
+
+    // Step 3: Apply pagination to filtered results
+    const total = filteredRepos.length;
+    const paginatedRepos = filteredRepos.slice(offset, offset + limit);
+
+    return {
+        repositories: paginatedRepos as DatabaseRepository[],
+        total,
         limit,
         offset,
     };

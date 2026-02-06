@@ -13,7 +13,7 @@ export interface RepositorySettings {
   schedule_cron: string | null;
   branch_filter: string[] | null;
   excluded_branches: string[] | null;
-  default_scan_type: 'quick' | 'full' | 'custom';
+  default_scan_type: 'quick' | 'full'; // ✅ FIX: Removed 'custom'
   enabled_scanners: {
     sast: boolean;
     sca: boolean;

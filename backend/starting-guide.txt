@@ -4,7 +4,7 @@
 
 If you want Docker to run both API + Redis:
 
-docker compose -f docker/docker-composer.yml up -d
+docker compose -f docker/docker-composer.yml up -d redis
 
 
 This starts:

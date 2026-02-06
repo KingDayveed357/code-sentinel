@@ -13,7 +13,7 @@ import type {
   ScanTriggerResult,
   WebhookRegistrationResult,
 } from './types';
-import { getIntegration } from '../integrations/service';
+import { getWorkspaceIntegration } from '../integrations/service';
 
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || 'https://collapsable-excurrent-gloria.ngrok-free.dev/api/webhooks/github';
 
@@ -59,16 +59,16 @@ export function generateWebhookSecret(): string {
  */
 export async function verifyWebhookOnGitHub(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   repositoryId: string,
   repoFullName: string,
   githubWebhookId: number
 ): Promise<{ exists: boolean; active: boolean; error?: string }> {
   try {
-    // Get user's GitHub integration
-    const integration = await getIntegration(fastify, userId, 'github');
+    // Get workspace's GitHub integration
+    const integration = await getWorkspaceIntegration(fastify, workspaceId, 'github');
 
-    if (!integration || !integration.access_token) {
+    if (!integration || !integration.oauth_access_token) {
       return {
         exists: false,
         active: false,
@@ -84,7 +84,7 @@ export async function verifyWebhookOnGitHub(
       {
         method: 'GET',
         headers: {
-          Authorization: `token ${integration.access_token}`,
+          Authorization: `Bearer ${integration.oauth_access_token}`,
           Accept: 'application/vnd.github.v3+json',
         },
       }
@@ -158,7 +158,7 @@ async function cleanupDeletedWebhook(
  */
 export async function getWebhookStatus(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   repositoryId: string,
   repoFullName: string
 ): Promise<'active' | 'inactive' | 'failed' | null> {
@@ -168,7 +168,6 @@ export async function getWebhookStatus(
       .from('repository_webhooks')
       .select('*')
       .eq('repository_id', repositoryId)
-      .eq('user_id', userId)
       .in('status', ['active', 'inactive'])
       .order('created_at', { ascending: false })
       .limit(1);
@@ -182,7 +181,7 @@ export async function getWebhookStatus(
     // Verify webhook exists on GitHub
     const verification = await verifyWebhookOnGitHub(
       fastify,
-      userId,
+      workspaceId,
       repositoryId,
       repoFullName,
       webhook.github_webhook_id
@@ -228,15 +227,15 @@ export async function getWebhookStatus(
  */
 export async function registerGitHubWebhook(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   repositoryId: string,
   repoFullName: string
 ): Promise<WebhookRegistrationResult> {
   try {
-    // Get user's GitHub integration
-    const integration = await getIntegration(fastify, userId, 'github');
+    // Get workspace's GitHub integration
+    const integration = await getWorkspaceIntegration(fastify, workspaceId, 'github');
 
-    if (!integration || !integration.access_token) {
+    if (!integration || !integration.oauth_access_token) {
       return {
         success: false,
         error: 'GitHub integration not found or token missing',
@@ -258,7 +257,7 @@ export async function registerGitHubWebhook(
       // Verify it still exists on GitHub
       const verification = await verifyWebhookOnGitHub(
         fastify,
-        userId,
+        workspaceId,
         repositoryId,
         repoFullName,
         existingWebhook.github_webhook_id
@@ -306,7 +305,7 @@ export async function registerGitHubWebhook(
       {
         method: 'POST',
         headers: {
-          Authorization: `token ${integration.access_token}`,
+          Authorization: `Bearer ${integration.oauth_access_token}`,
           Accept: 'application/vnd.github.v3+json',
           'Content-Type': 'application/json',
         },
@@ -326,7 +325,7 @@ export async function registerGitHubWebhook(
       .from('repository_webhooks')
       .insert({
         repository_id: repositoryId,
-        user_id: userId,
+        workspace_id: workspaceId,
         github_webhook_id: githubWebhook.id,
         webhook_url: webhookUrl,
         webhook_secret: webhookSecret,
@@ -349,7 +348,7 @@ export async function registerGitHubWebhook(
           .from('repository_webhooks')
           .insert({
             repository_id: repositoryId,
-            user_id: userId,
+            workspace_id: workspaceId,
             github_webhook_id: githubWebhook.id,
             webhook_url: webhookUrl,
             webhook_secret: webhookSecret,
@@ -395,7 +394,7 @@ export async function registerGitHubWebhook(
  */
 export async function deleteGitHubWebhook(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
   repositoryId: string,
   repoFullName: string
 ): Promise<{ success: boolean; error?: string }> {
@@ -405,17 +404,16 @@ export async function deleteGitHubWebhook(
       .from('repository_webhooks')
       .select('*')
       .eq('repository_id', repositoryId)
-      .eq('user_id', userId)
       .single();
 
     if (!webhook) {
       return { success: true }; // Already deleted
     }
 
-    // Get user's GitHub integration
-    const integration = await getIntegration(fastify, userId, 'github');
+    // Get workspace's GitHub integration
+    const integration = await getWorkspaceIntegration(fastify, workspaceId, 'github');
 
-    if (integration?.access_token) {
+    if (integration?.oauth_access_token) {
       // Try to delete from GitHub
       const [owner, repo] = repoFullName.split('/');
 
@@ -425,7 +423,7 @@ export async function deleteGitHubWebhook(
           {
             method: 'DELETE',
             headers: {
-              Authorization: `token ${integration.access_token}`,
+              Authorization: `Bearer ${integration.oauth_access_token}`,
               Accept: 'application/vnd.github.v3+json',
             },
           }
@@ -493,14 +491,55 @@ export async function updateRepositorySettings(
   repositoryId: string,
   updates: Partial<RepositorySettings>
 ): Promise<RepositorySettings> {
-  const { data, error } = await fastify.supabase
+  // First, check if settings exist
+  const { data: existing } = await fastify.supabase
     .from('repository_settings')
-    .update(updates)
+    .select('id')
     .eq('repository_id', repositoryId)
-    .select()
     .single();
 
+  let data, error;
+
+  if (existing) {
+    // Update existing settings
+    const result = await fastify.supabase
+      .from('repository_settings')
+      .update(updates)
+      .eq('repository_id', repositoryId)
+      .select()
+      .single();
+    
+    data = result.data;
+    error = result.error;
+  } else {
+    // Create new settings record
+    const settingsData = {
+      repository_id: repositoryId,
+      auto_scan_enabled: false,
+      scan_on_push: true,
+      scan_on_pr: false,
+      branch_filter: ['main', 'master'],
+      excluded_branches: [],
+      default_scan_type: 'full',
+      auto_create_issues: false,
+      issue_severity_threshold: 'high',
+      issue_labels: ['security', 'automated'],
+      issue_assignees: [],
+      ...updates, // Apply the updates
+    };
+
+    const result = await fastify.supabase
+      .from('repository_settings')
+      .insert(settingsData)
+      .select()
+      .single();
+    
+    data = result.data;
+    error = result.error;
+  }
+
   if (error || !data) {
+    fastify.log.error({ error, repositoryId }, 'Failed to update repository settings');
     throw new Error('Failed to update repository settings');
   }
 
@@ -668,8 +707,7 @@ export async function updateWebhookEventStatus(
  */
 export async function registerWebhooksForWorkspace(
   fastify: FastifyInstance,
-  workspaceId: string,
-  userId: string
+  workspaceId: string
 ): Promise<{ registered: number; failed: number }> {
   let registered = 0;
   let failed = 0;
@@ -688,11 +726,10 @@ export async function registerWebhooksForWorkspace(
     }
 
     for (const repo of repos) {
-      // Note: registerGitHubWebhook still uses userId for integration lookup
-      // This is a legacy pattern - integration should be workspace-scoped
+      // Workspace-scoped webhook registration
       const result = await registerGitHubWebhook(
         fastify,
-        userId,
+        workspaceId,
         repo.id,
         repo.full_name
       );
@@ -736,5 +773,5 @@ export async function registerWebhooksForUser(
     return { registered: 0, failed: 0 };
   }
 
-  return registerWebhooksForWorkspace(fastify, personalWorkspace.id, userId);
+  return registerWebhooksForWorkspace(fastify, personalWorkspace.id);
 }

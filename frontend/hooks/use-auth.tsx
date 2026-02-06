@@ -36,6 +36,8 @@ interface AuthContextValue {
   isOnboardingComplete: boolean;
   userPlan: string;
   canAccessTeam: boolean;
+  workspaceId: string | null;
+  workspace: Workspace | null;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -214,6 +216,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [userPlan]
   );
 
+  const workspaceId = useMemo(() => workspace?.id || null, [workspace?.id]);
+
   const value = useMemo(
     () => ({
       user,
@@ -226,6 +230,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isOnboardingComplete,
       userPlan,
       canAccessTeam,
+      workspaceId,
+      workspace,
     }),
     [
       user,
@@ -238,6 +244,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isOnboardingComplete,
       userPlan,
       canAccessTeam,
+      workspaceId,
+      workspace,
     ]
   );
 

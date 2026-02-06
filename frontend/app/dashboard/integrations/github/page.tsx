@@ -43,6 +43,7 @@ import { integrationsApi } from "@/lib/api/integrations";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useGitHubRepositories, useGitHubIntegrationStatus, workspaceKeys } from "@/hooks/use-dashboard-data";
 import type { GitHubRepository, GitHubAccount } from "@/lib/api/repositories";
+import { toast } from 'sonner'
 
 export default function GitHubIntegrationPage() {
   const router = useRouter();
@@ -126,16 +127,23 @@ export default function GitHubIntegrationPage() {
       const result = await integrationsApi.connectGitHub(providerToken);
       
       if (result.success) {
-        setSuccess('GitHub connected successfully!');
+        // setSuccess('GitHub connected successfully!');
+        toast.success('GitHub connected successfully!');
         // Invalidate queries to refetch with new connection
         queryClient.invalidateQueries({
           queryKey: workspaceKeys.all(workspace.id),
         });
         await loadConnectionStatus();
-        setTimeout(() => setSuccess(null), 3000);
+        // setTimeout(() => setSuccess(null), 3000);
       }
     } catch (err: any) {
       console.error('Failed to connect GitHub:', err);
+      toast.error(
+        <div>
+          <strong>Failed to connect GitHub integration:</strong><br />
+          <p>{err.message || 'An unexpected error occurred.'}</p>
+        </div>
+      );
       setError(err.message || 'Failed to connect GitHub integration');
     } finally {
       setConnecting(false);
@@ -152,21 +160,30 @@ export default function GitHubIntegrationPage() {
     if (providerToken) {
       // OAuth callback (personal workspace only)
       await connectGitHubIntegration(providerToken);
+      
       // Clean URL
+      toast('Redirecting to integrations page in 3 seconds...');
       window.history.replaceState({}, '', '/dashboard/integrations/github');
     } else if (installSuccess) {
       // GitHub App installation success
-      setSuccess('GitHub App installed successfully!');
+      toast.success('GitHub App installed successfully!');
       // Invalidate queries to refetch with new connection
       queryClient.invalidateQueries({
         queryKey: workspaceKeys.all(workspace.id),
       });
       await loadConnectionStatus();
       // Clean URL
+      toast('Redirecting to integrations page in 3 seconds...');
       window.history.replaceState({}, '', '/dashboard/integrations/github');
-      setTimeout(() => setSuccess(null), 5000);
+      // setTimeout(() => setSuccess(null), 5000);
     } else if (installError) {
       // GitHub App installation error
+       toast.error(
+        <div>
+          <strong>Failed to install GitHub App:</strong><br />
+          <p>Failed to install GitHub App. Please try again.</p>
+        </div>
+        );
       setError('Failed to install GitHub App. Please try again.');
       await loadConnectionStatus();
       // Clean URL
@@ -180,21 +197,7 @@ export default function GitHubIntegrationPage() {
     handlePageLoad();
   }, [handlePageLoad]); // Reload when workspace or search params change
 
-  // const loadConnectionStatus = useCallback(async () => {
-  //   try {
-  //     setError(null);
-  //     // Refetch integration status - React Query will handle the loading state
-  //     await refetchStatus();
-      
-  //     // If connected, also load repositories
-  //     if (integrationStatus?.connected) {
-  //       await refetchRepos();
-  //     }
-  //   } catch (err: any) {
-  //     console.error('Failed to load connection status:', err);
-  //     setError(err.message || "Failed to load GitHub status");
-  //   }
-  // }, [refetchStatus, refetchRepos, integrationStatus?.connected]);
+  
 
   const loadRepositories = useCallback(async () => {
     try {
@@ -207,6 +210,12 @@ export default function GitHubIntegrationPage() {
       if (err.message?.includes('not connected')) {
         // Status will be updated by React Query
       } else if (err.message?.includes('expired')) {
+        toast.error(
+          <div>
+            <strong>GitHub token expired:</strong><br />
+            <p>Please reconnect your account to continue.</p>
+          </div>
+        );
         setError('GitHub token expired. Please reconnect your account.');
       } else {
         setError(err.message || "Failed to load GitHub repositories");
@@ -244,7 +253,7 @@ export default function GitHubIntegrationPage() {
         window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/auth/github?${params.toString()}`;
       } else if (result.mode === 'github_app') {
         if (result.status === 'already_connected') {
-          setSuccess('GitHub App already connected');
+          toast.success('GitHub App already connected');
           await loadConnectionStatus();
         } else if (result.install_url) {
           // Team workspace → Redirect to GitHub App installation
@@ -267,7 +276,7 @@ export default function GitHubIntegrationPage() {
       const result = await integrationsApi.disconnectIntegration('github');
       
       if (result.success) {
-        setSuccess('GitHub disconnected successfully');
+        toast.success('GitHub disconnected successfully');
         setSelectedRepos(new Set());
         setShowDisconnectModal(false);
         
@@ -287,6 +296,12 @@ export default function GitHubIntegrationPage() {
       }
     } catch (err: any) {
       console.error('Failed to disconnect GitHub:', err);
+      toast.error(
+        <div>
+          <strong>Failed to disconnect GitHub:</strong><br />
+          <p>{err.message || 'An unexpected error occurred.'}</p>
+        </div>
+      );
       setError(err.message || 'Failed to disconnect GitHub');
     } finally {
       setDisconnecting(false);
@@ -316,7 +331,7 @@ export default function GitHubIntegrationPage() {
       
       if (result.success) {
         const count = result.imported;
-        setSuccess(`Successfully imported ${count} ${count === 1 ? 'repository' : 'repositories'}`);
+        toast.success(`Successfully imported ${count} ${count === 1 ? 'repository' : 'repositories'}`);
         setSelectedRepos(new Set());
         
         // Invalidate queries to refresh project list
@@ -327,7 +342,7 @@ export default function GitHubIntegrationPage() {
         }
         
         await loadRepositories();
-        
+        toast('Redirecting to projects page in 2 seconds...');
         setTimeout(() => {
           router.push("/dashboard/projects");
         }, 2000);

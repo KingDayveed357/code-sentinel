@@ -2,6 +2,7 @@
 // ===================================================================
 import type { NormalizedVulnerability } from '../base/scanner-interface';
 import type { BaseScanner } from '../base/scanner-interface';
+import { createSCATitle } from '../utils/title-normalizer';
 
 export function parseOSVOutput(
   results: any,
@@ -28,7 +29,7 @@ export function parseOSVOutput(
           scanner: 'osv',
           type: 'sca',
           severity: mapOSVSeverity(vuln.database_specific?.severity || vuln.severity),
-          title: `${pkg.package.name}: ${vuln.id}`,
+          title: createSCATitle(pkg.package.name, vuln.id, pkg.package.version),
           description: vuln.summary || vuln.details || 'Vulnerable dependency detected',
           file_path: source.replace(workspacePath, '').replace(/^\/+/, ''),
           line_start: null,

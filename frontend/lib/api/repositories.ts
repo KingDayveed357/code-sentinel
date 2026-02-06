@@ -87,7 +87,9 @@ export const repositoriesApi = {
     search?: string;
     provider?: "github" | "gitlab" | "bitbucket";
     private?: boolean;
-    status?: "active" | "inactive" | "error";
+    status?: 
+      | "active" | "inactive" | "error"  // Repository statuses
+      | "completed" | "running" | "normalizing" | "ai_enriching" | "failed" | "pending" | "cancelled" | "never_scanned";  // Scan statuses
     page?: number;
     limit?: number;
   }): Promise<ListRepositoriesResponse> => {

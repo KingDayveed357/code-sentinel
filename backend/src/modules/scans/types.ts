@@ -4,7 +4,7 @@ export interface ScanRun {
     user_id: string;
     repository_id: string;
     branch: string;
-    scan_type: 'quick' | 'full' | 'custom';
+    scan_type: 'quick' | 'full'; // ✅ FIX: Removed 'custom'
     status: 'pending' | 'running' | 'processing_ai' | 'completed' | 'failed' | 'cancelled';
     vulnerabilities_found: number;
     critical_count: number;
@@ -25,5 +25,5 @@ export interface ScanJobPayload {
     repositoryId: string;
     workspaceId: string; // Changed from userId - workspace-scoped
     branch: string;
-    scanType: 'quick' | 'full' | 'custom';
+    scanType: 'quick' | 'full'; // ✅ FIX: Removed 'custom'
 }

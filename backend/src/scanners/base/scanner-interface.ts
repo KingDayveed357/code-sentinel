@@ -5,7 +5,7 @@ export interface NormalizedVulnerability {
   id: string;
   scan_id: string;
   scanner: 'semgrep' | 'osv' | 'gitleaks' | 'checkov' | 'trivy';
-  type: 'sast' | 'sca' | 'secret' | 'iac' | 'container';
+  type: 'sast' | 'sca' | 'secrets' | 'iac' | 'container';
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
   title: string;
   description: string;
@@ -43,7 +43,7 @@ export interface ScanResult {
 
 export abstract class BaseScanner {
   abstract readonly name: string;
-  abstract readonly type: 'sast' | 'sca' | 'secret' | 'iac' | 'container';
+  abstract readonly type: 'sast' | 'sca' | 'secrets' | 'iac' | 'container';
 
   constructor(protected fastify: FastifyInstance) {}
 

@@ -27,14 +27,14 @@ export function useWorkspaceChangeListener() {
     if (currentWorkspaceId && currentWorkspaceId !== previousWorkspaceIdRef.current) {
       const previousId = previousWorkspaceIdRef.current;
 
-      console.log("🔄 Workspace changed detected:", {
-        from: previousId,
-        to: currentWorkspaceId,
-      });
+      // console.log("🔄 Workspace changed detected:", {
+      //   from: previousId,
+      //   to: currentWorkspaceId,
+      // });
 
       // Step 1: Cancel in-flight requests for old workspace
       if (previousId) {
-        console.log("🛑 Cancelling in-flight requests for workspace:", previousId);
+        // console.log("🛑 Cancelling in-flight requests for workspace:", previousId);
         queryClient.cancelQueries({
           predicate: (query) => {
             const key = query.queryKey;
@@ -55,7 +55,7 @@ export function useWorkspaceChangeListener() {
       }
 
       // Step 3: Invalidate new workspace queries to trigger refetch
-      console.log("♻️  Invalidating queries for new workspace:", currentWorkspaceId);
+      // console.log("Invalidating queries for new workspace:", currentWorkspaceId);
       queryClient.invalidateQueries({
         predicate: (query) => {
           const key = query.queryKey;

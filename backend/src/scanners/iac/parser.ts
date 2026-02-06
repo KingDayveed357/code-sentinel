@@ -2,6 +2,7 @@
 // ===================================================================
 import type { NormalizedVulnerability } from '../base/scanner-interface';
 import type { BaseScanner } from '../base/scanner-interface';
+import { createIaCTitle } from '../utils/title-normalizer';
 
 export function parseCheckovOutput(
   results: any,
@@ -27,7 +28,7 @@ export function parseCheckovOutput(
       scanner: 'checkov',
       type: 'iac',
       severity: mapCheckovSeverity(check.check_result?.result || check.severity || 'MEDIUM'),
-      title: check.check_name || check.check_id,
+      title: createIaCTitle(check.check_name || check.check_id, check.resource),
       description: check.description || 'IaC misconfiguration detected',
       file_path: filePath,
       line_start: check.file_line_range?.[0] || null,

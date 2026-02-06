@@ -11,19 +11,25 @@ export const listRepositoriesSchema = z.object({
         .string()
         .transform((val) => val === "true")
         .optional(),
-    status: z.enum(["active", "inactive", "error"]).optional(),
+    // ✅ TRUST FIX: Support filtering by scan status (not just repository status)
+    // This allows filtering projects by their latest scan status
+    status: z.enum([
+        "active", "inactive", "error",  // Repository statuses
+        "completed", "running", "normalizing", "ai_enriching", // Scan statuses
+        "failed", "pending", "cancelled", "never_scanned"  // More scan statuses
+    ]).optional(),
     page: z
         .string()
-        .transform((val) => parseInt(val, 10))
-        .pipe(z.number().int().positive())
         .optional()
-        .default("1"),
+        .default("1")
+        .transform((val) => parseInt(val, 10))
+        .pipe(z.number().int().positive()),
     limit: z
         .string()
-        .transform((val) => parseInt(val, 10))
-        .pipe(z.number().int().positive().max(100))
         .optional()
-        .default("20"),
+        .default("20")
+        .transform((val) => parseInt(val, 10))
+        .pipe(z.number().int().positive().max(100)),
 });
 
 export type ListRepositoriesInput = z.infer<typeof listRepositoriesSchema>;
@@ -73,7 +79,7 @@ export const updateSettingsSchema = z.object({
     scan_on_pr: z.boolean().optional(),
     branch_filter: z.array(z.string()).optional(),
     excluded_branches: z.array(z.string()).optional(),
-    default_scan_type: z.enum(["quick", "full", "custom"]).optional(),
+    default_scan_type: z.enum(["quick", "full"]).optional(), // ✅ FIX: Removed 'custom'
     auto_create_issues: z.boolean().optional(),
     issue_severity_threshold: z.enum(["critical", "high", "medium", "low"]).optional(),
     issue_labels: z.array(z.string()).optional(),

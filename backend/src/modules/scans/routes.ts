@@ -43,6 +43,9 @@ export default async function scansRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/run/:scanId/logs', { preHandler }, controller.getScanLogsController);
 
+  // Progress is tracked in scans table (progress_percentage, progress_stage)
+  // Frontend polls GET /run/:scanId to get progress updates
+
   /**
    * GET /api/scans/run/:scanId/export?format=json|csv
    * Export scan results

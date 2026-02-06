@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import sensible from '@fastify/sensible';
 import { env } from './env';
+import { eventLoopMonitor } from './utils/event-loop-monitor';
 
 // Plugins
 import supabasePlugin from './plugins/supabase';
@@ -53,6 +54,12 @@ export function buildServer() {
 
   // Initialize scan queue and worker after plugins are loaded
   app.addHook('onReady', async () => {
+    // START EVENT LOOP MONITORING TO DETECT BLOCKING (dev/staging)
+    if (env.NODE_ENV !== 'production') {
+      eventLoopMonitor.startMonitoring(app, 5000);
+      app.log.info('✓ Event loop monitoring enabled (development mode)');
+    }
+
     // Create scan queue
     app.jobQueue.createQueue<ScanJobPayload>({
       name: 'scans',
@@ -83,18 +90,44 @@ export function buildServer() {
     app.jobQueue.createQueueEvents('scans');
 
     app.log.info('Scan queue and workers initialized');
+
+    // ✅ PRODUCTION FIX: Start stalled scan detector
+    const { runScanHealthCheck } = await import('./jobs/stalled-scan-detector');
+    
+    // Run immediately on startup
+    runScanHealthCheck(app).catch(err => 
+      app.log.error({ err }, 'Initial scan health check failed')
+    );
+    
+    // Run every 5 minutes
+    setInterval(() => {
+      runScanHealthCheck(app).catch(err => 
+        app.log.error({ err }, 'Scan health check failed')
+      );
+    }, 5 * 60 * 1000);
+    
+    app.log.info('✅ Stalled scan detector started (runs every 5 minutes)');
   });
 
   // Health check
   app.get('/health', async () => {
     const queueMetrics = await app.jobQueue.getQueueMetrics('scans').catch(() => null);
+    
+    // Include event loop metrics to detect blocking
+    const eventLoopMetrics = eventLoopMonitor.getMetrics();
 
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
       environment: env.NODE_ENV,
       queue: queueMetrics || { status: 'unavailable' },
+      eventLoop: eventLoopMetrics,
     };
+  });
+
+  // Metrics endpoint (for monitoring event loop health during scans)
+  app.get('/metrics/event-loop', async () => {
+    return eventLoopMonitor.getMetrics();
   });
 
   // Register route modules

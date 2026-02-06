@@ -1,7 +1,7 @@
 // src/modules/auth/controller.ts
 /**
  * Auth Controller
- * 
+ *
  * ✅ UPDATED: Functions that need workspace integrations now use workspace_integrations table
  */
 
@@ -15,16 +15,18 @@ export async function githubOAuthController(
 ) {
   try {
     const { data, error } = await fastify.supabase.auth.signInWithOAuth({
-      provider: 'github',
+      provider: "github",
       options: {
         redirectTo: `${env.NEXT_PUBLIC_FRONTEND_URL}/oauth/callback`,
-        scopes: 'read:user user:email repo',
+        scopes: "read:user user:email repo",
       },
     });
 
     if (error || !data.url) {
       fastify.log.error({ error }, "Failed to initiate GitHub OAuth");
-      throw fastify.httpErrors.internalServerError("Failed to initiate GitHub OAuth");
+      throw fastify.httpErrors.internalServerError(
+        "Failed to initiate GitHub OAuth"
+      );
     }
 
     fastify.log.info("GitHub OAuth URL generated");
@@ -37,7 +39,7 @@ export async function githubOAuthController(
 
 /**
  * POST /auth/oauth/callback
- * 
+ *
  * ✅ UNCHANGED: Still stores token in user metadata for ensureGitHubIntegration
  */
 export async function oauthCallbackController(
@@ -59,7 +61,10 @@ export async function oauthCallbackController(
     }
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error } = await fastify.supabase.auth.getUser(token);
+    const {
+      data: { user },
+      error,
+    } = await fastify.supabase.auth.getUser(token);
 
     if (error || !user) {
       throw fastify.httpErrors.unauthorized("Invalid session");
@@ -70,8 +75,9 @@ export async function oauthCallbackController(
     fastify.log.info({ userId }, "Processing OAuth callback");
 
     // Get user data from Supabase Auth
-    const { data: authData, error: authError } = await fastify.supabase.auth.admin.getUserById(userId);
-    
+    const { data: authData, error: authError } =
+      await fastify.supabase.auth.admin.getUserById(userId);
+
     if (authError || !authData.user) {
       throw fastify.httpErrors.unauthorized("Failed to get user data");
     }
@@ -95,7 +101,7 @@ export async function oauthCallbackController(
       repos_imported: false,
       completed_at: null,
     };
-    
+
     const onboardingCompleted = existingProfile?.onboarding_completed ?? false;
     const onboardingState = existingProfile?.onboarding_state
       ? { ...defaultOnboardingState, ...existingProfile.onboarding_state }
@@ -118,7 +124,11 @@ export async function oauthCallbackController(
         {
           id: userId,
           email: authData.user.email,
-          full_name: githubUser?.full_name || githubUser?.user_name || githubUser?.name || "User",
+          full_name:
+            githubUser?.full_name ||
+            githubUser?.user_name ||
+            githubUser?.name ||
+            "User",
           avatar_url: githubUser?.avatar_url,
           plan: userPlan,
           onboarding_completed: onboardingCompleted,
@@ -130,23 +140,29 @@ export async function oauthCallbackController(
       .single();
 
     if (profileError) {
-      fastify.log.error({ profileError, userId }, "Failed to create user profile");
-      throw fastify.httpErrors.internalServerError("Failed to create user profile");
+      fastify.log.error(
+        { profileError, userId },
+        "Failed to create user profile"
+      );
+      throw fastify.httpErrors.internalServerError(
+        "Failed to create user profile"
+      );
     }
 
     // Store GitHub provider token in user metadata
-    const { error: metadataError } = await fastify.supabase.auth.admin.updateUserById(
-      userId,
-      {
+    const { error: metadataError } =
+      await fastify.supabase.auth.admin.updateUserById(userId, {
         user_metadata: {
           ...authData.user.user_metadata,
           github_provider_token: provider_token,
         },
-      }
-    );
+      });
 
     if (metadataError) {
-      fastify.log.error({ metadataError, userId }, "Failed to store GitHub token in metadata");
+      fastify.log.error(
+        { metadataError, userId },
+        "Failed to store GitHub token in metadata"
+      );
     } else {
       fastify.log.info({ userId }, "GitHub token stored in user metadata");
     }
@@ -158,11 +174,11 @@ export async function oauthCallbackController(
     });
   } catch (error: any) {
     fastify.log.error({ error }, "OAuth callback failed");
-    
+
     if (error.statusCode) {
       throw error;
     }
-    
+
     throw fastify.httpErrors.internalServerError("OAuth callback failed");
   }
 }
@@ -192,7 +208,9 @@ export async function completeOnboardingController(
 
   if (error) {
     fastify.log.error({ error, userId }, "Failed to complete onboarding");
-    throw fastify.httpErrors.internalServerError("Failed to complete onboarding");
+    throw fastify.httpErrors.internalServerError(
+      "Failed to complete onboarding"
+    );
   }
 
   const { data: user } = await fastify.supabase
@@ -206,7 +224,7 @@ export async function completeOnboardingController(
 
 /**
  * DELETE /api/auth/account - Delete user account
- * 
+ *
  * ✅ UPDATED: Deletes from workspace_integrations table
  */
 export async function deleteAccountController(
@@ -232,33 +250,43 @@ export async function deleteAccountController(
     throw fastify.httpErrors.badRequest("Username does not match");
   }
 
-  // Delete workspace integrations (CASCADE will handle this via FK, but explicit is safer)
+  // ✅ FIX: Delete in correct order to respect foreign key constraints
+  // 1. Delete activity logs referencing this user
+  await fastify.supabase
+    .from("team_activity_log")
+    .delete()
+    .eq("actor_id", userId);
+
+  // 2. Delete workspace integrations (CASCADE will handle this via FK, but explicit is safer)
   const { data: workspaces } = await fastify.supabase
     .from("workspaces")
     .select("id")
     .eq("owner_id", userId);
 
   if (workspaces && workspaces.length > 0) {
-    const workspaceIds = workspaces.map(w => w.id);
-    
+    const workspaceIds = workspaces.map((w) => w.id);
+
     await fastify.supabase
       .from("workspace_integrations")
       .delete()
       .in("workspace_id", workspaceIds);
   }
 
-  // Delete user profile
+  // 3. Delete user profile (now that dependent records are removed)
   const { error: profileError } = await fastify.supabase
     .from("users")
     .delete()
     .eq("id", userId);
 
   if (profileError) {
-    fastify.log.error({ profileError, userId }, "Failed to delete user profile");
+    fastify.log.error(
+      { profileError, userId },
+      "Failed to delete user profile"
+    );
     throw fastify.httpErrors.internalServerError("Failed to delete account");
   }
 
-  // Delete from Supabase Auth
+  // 4. Delete from Supabase Auth
   await fastify.supabase.auth.admin.deleteUser(userId);
 
   fastify.log.info({ userId }, "User account deleted successfully");
@@ -268,7 +296,7 @@ export async function deleteAccountController(
 
 /**
  * POST /api/auth/resync-github - Re-sync GitHub data
- * 
+ *
  * ✅ UPDATED: Uses workspace_integrations table
  */
 export async function resyncGitHubController(
@@ -292,7 +320,11 @@ export async function resyncGitHubController(
     .eq("connected", true)
     .single();
 
-  if (!integration || integration.type !== 'oauth' || !integration.oauth_access_token) {
+  if (
+    !integration ||
+    integration.type !== "oauth" ||
+    !integration.oauth_access_token
+  ) {
     throw fastify.httpErrors.badRequest(
       "GitHub integration not found or not using OAuth. Please connect GitHub first."
     );
@@ -308,7 +340,9 @@ export async function resyncGitHubController(
   });
 
   if (!githubResponse.ok) {
-    throw fastify.httpErrors.badRequest("Failed to fetch GitHub data. Token may be expired.");
+    throw fastify.httpErrors.badRequest(
+      "Failed to fetch GitHub data. Token may be expired."
+    );
   }
 
   const githubUser = await githubResponse.json();
@@ -325,7 +359,9 @@ export async function resyncGitHubController(
 
   if (error) {
     fastify.log.error({ error, userId }, "Failed to update user profile");
-    throw fastify.httpErrors.internalServerError("Failed to re-sync GitHub data");
+    throw fastify.httpErrors.internalServerError(
+      "Failed to re-sync GitHub data"
+    );
   }
 
   const { data: updatedUser } = await fastify.supabase
@@ -345,14 +381,14 @@ export async function skipOnboardingStepController(
   const userId = request.profile!.id;
   const { step } = request.body;
 
-  if (!step || typeof step !== 'string') {
-    throw fastify.httpErrors.badRequest('Step name is required');
+  if (!step || typeof step !== "string") {
+    throw fastify.httpErrors.badRequest("Step name is required");
   }
 
   const { data: user } = await fastify.supabase
-    .from('users')
-    .select('onboarding_state')
-    .eq('id', userId)
+    .from("users")
+    .select("onboarding_state")
+    .eq("id", userId)
     .single();
 
   const currentState = user?.onboarding_state || {
@@ -362,16 +398,16 @@ export async function skipOnboardingStepController(
     last_updated: null,
   };
 
-  const stepsSkipped = Array.isArray(currentState.steps_skipped) 
-    ? currentState.steps_skipped 
+  const stepsSkipped = Array.isArray(currentState.steps_skipped)
+    ? currentState.steps_skipped
     : [];
-  
+
   if (!stepsSkipped.includes(step)) {
     stepsSkipped.push(step);
   }
 
   const { error } = await fastify.supabase
-    .from('users')
+    .from("users")
     .update({
       onboarding_state: {
         ...currentState,
@@ -380,19 +416,24 @@ export async function skipOnboardingStepController(
       },
       updated_at: new Date().toISOString(),
     })
-    .eq('id', userId);
+    .eq("id", userId);
 
   if (error) {
-    fastify.log.error({ error, userId, step }, 'Failed to update onboarding state');
-    throw fastify.httpErrors.internalServerError('Failed to update onboarding state');
+    fastify.log.error(
+      { error, userId, step },
+      "Failed to update onboarding state"
+    );
+    throw fastify.httpErrors.internalServerError(
+      "Failed to update onboarding state"
+    );
   }
 
-  fastify.log.info({ userId, step }, 'Onboarding step marked as skipped');
+  fastify.log.info({ userId, step }, "Onboarding step marked as skipped");
 
-  return reply.send({ 
-    success: true, 
+  return reply.send({
+    success: true,
     step,
-    message: 'Step marked as skipped' 
+    message: "Step marked as skipped",
   });
 }
 
@@ -404,13 +445,13 @@ export async function getOnboardingStateController(
   const userId = request.profile!.id;
 
   const { data: user } = await fastify.supabase
-    .from('users')
-    .select('onboarding_completed, onboarding_state')
-    .eq('id', userId)
+    .from("users")
+    .select("onboarding_completed, onboarding_state")
+    .eq("id", userId)
     .single();
 
   if (!user) {
-    throw fastify.httpErrors.notFound('User not found');
+    throw fastify.httpErrors.notFound("User not found");
   }
 
   const state = user.onboarding_state || {
@@ -424,18 +465,18 @@ export async function getOnboardingStateController(
   let repoCount = 0;
   if (request.workspace?.id) {
     const { count } = await fastify.supabase
-      .from('repositories')
-      .select('id', { count: 'exact', head: true })
-      .eq('workspace_id', request.workspace.id)
-      .eq('status', 'active');
-    
+      .from("repositories")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", request.workspace.id)
+      .eq("status", "active");
+
     repoCount = count || 0;
   }
 
-  const shouldShowBanner = 
+  const shouldShowBanner =
     user.onboarding_completed === true &&
     Array.isArray(state.steps_skipped) &&
-    state.steps_skipped.includes('import_repos') &&
+    state.steps_skipped.includes("import_repos") &&
     !state.banner_dismissed &&
     repoCount === 0;
 
@@ -457,9 +498,9 @@ export async function dismissImportBannerController(
   const userId = request.profile!.id;
 
   const { data: user } = await fastify.supabase
-    .from('users')
-    .select('onboarding_state')
-    .eq('id', userId)
+    .from("users")
+    .select("onboarding_state")
+    .eq("id", userId)
     .single();
 
   const currentState = user?.onboarding_state || {
@@ -469,7 +510,7 @@ export async function dismissImportBannerController(
   };
 
   const { error } = await fastify.supabase
-    .from('users')
+    .from("users")
     .update({
       onboarding_state: {
         ...currentState,
@@ -478,17 +519,17 @@ export async function dismissImportBannerController(
       },
       updated_at: new Date().toISOString(),
     })
-    .eq('id', userId);
+    .eq("id", userId);
 
   if (error) {
-    fastify.log.error({ error, userId }, 'Failed to dismiss banner');
-    throw fastify.httpErrors.internalServerError('Failed to dismiss banner');
+    fastify.log.error({ error, userId }, "Failed to dismiss banner");
+    throw fastify.httpErrors.internalServerError("Failed to dismiss banner");
   }
 
-  fastify.log.info({ userId }, 'Import banner dismissed');
+  fastify.log.info({ userId }, "Import banner dismissed");
 
-  return reply.send({ 
+  return reply.send({
     success: true,
-    message: 'Banner dismissed' 
+    message: "Banner dismissed",
   });
 }

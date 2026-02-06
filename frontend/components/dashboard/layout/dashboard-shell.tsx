@@ -2,7 +2,7 @@
 "use client";
 
 import type React from "react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Home,
@@ -15,7 +15,9 @@ import {
   X,
   Plug,
   ChevronLeft,
-  FolderGit2
+  FolderGit2,
+  AlertCircle,
+  Search
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -24,9 +26,12 @@ import { AIAssistant } from "@/components/dashboard/ai-assistant";
 import { useAuth } from "@/hooks/use-auth";
 import { UserNav } from "@/components/dashboard/sidebar/user-nav";
 import { WorkspaceSwitcher } from "./workspace-switcher";
+import { ScanActivityTray } from "@/components/scans/scan-activity-tray";
 
 const navigation = [
   { name: "Overview", href: "/dashboard", icon: Home },
+  { name: "Scans", href: "/dashboard/scans", icon: Search, badge: "running_scans" },
+  { name: "Vulnerabilities", href: "/dashboard/vulnerabilities", icon: AlertCircle, badge: "critical_high" },
   { name: "Projects", href: "/dashboard/projects", icon: FolderGit2 },
   { name: "Integrations", href: "/dashboard/integrations", icon: Plug },
   { name: "Team", href: "/dashboard/teams", icon: Users },
@@ -38,7 +43,42 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
-  const { canAccessTeam, profileLoading } = useAuth();
+  const { canAccessTeam, profileLoading, workspaceId } = useAuth();
+  const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({
+    running_scans: 0,
+    critical_high: 0,
+  });
+
+  // Fetch badge counts
+  useEffect(() => {
+    if (!workspaceId) return;
+
+    const fetchBadgeCounts = async () => {
+      try {
+        // Fetch running scans count
+        const scansRes = await fetch(`/api/workspaces/${workspaceId}/scans/stats`);
+        if (scansRes.ok) {
+          const scansData = await scansRes.json();
+          setBadgeCounts((prev) => ({ ...prev, running_scans: scansData.running || 0 }));
+        }
+
+        // Fetch critical/high vulnerabilities count
+        const vulnsRes = await fetch(`/api/workspaces/${workspaceId}/vulnerabilities/stats`);
+        if (vulnsRes.ok) {
+          const vulnsData = await vulnsRes.json();
+          const criticalHigh = (vulnsData.by_severity?.critical || 0) + (vulnsData.by_severity?.high || 0);
+          setBadgeCounts((prev) => ({ ...prev, critical_high: criticalHigh }));
+        }
+      } catch (error) {
+        console.error("Failed to fetch badge counts:", error);
+      }
+    };
+
+    fetchBadgeCounts();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchBadgeCounts, 30000);
+    return () => clearInterval(interval);
+  }, [workspaceId]);
 
   const filteredNavigation = useMemo(() => {
     return navigation
@@ -56,11 +96,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       <aside
         className={`
           fixed inset-y-0 left-0 z-50 bg-card border-r border-border
-          flex flex-col // Ensure flex column for proper spacing
-          transform transition-all duration-300 ease-in-out // Smoother transition
+          flex flex-col 
+          transform transition-all duration-300 ease-in-out 
           md:relative md:translate-x-0
           ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}
-          ${desktopSidebarCollapsed ? "md:w-20" : "md:w-64"} // Slightly wider expanded state for better readability
+          ${desktopSidebarCollapsed ? "md:w-20" : "md:w-64"} 
           w-64
         `}
       >
@@ -102,6 +142,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <nav className="flex-1 space-y-1 px-3 py-4 overflow-y-auto">
             {filteredNavigation.map((item) => {
               const isActive = pathname === item.href;
+              const badgeCount = item.badge ? badgeCounts[item.badge] : 0;
+              const showBadge = badgeCount > 0;
+              
               return (
                 <Link
                   key={item.name}
@@ -121,8 +164,23 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                   `}
                   onClick={() => setMobileMenuOpen(false)}
                 >
-                  <item.icon className="h-5 w-5" />
-                  {!desktopSidebarCollapsed && <span>{item.name}</span>}
+                  <item.icon className="h-5 w-5 flex-shrink-0" />
+                  {!desktopSidebarCollapsed && (
+                    <>
+                      <span className="flex-1">{item.name}</span>
+                      {showBadge && (
+                        <span className={`
+                          inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold rounded-full
+                          ${isActive 
+                            ? "bg-primary-foreground text-primary" 
+                            : "bg-primary text-primary-foreground"
+                          }
+                        `}>
+                          {badgeCount}
+                        </span>
+                      )}
+                    </>
+                  )}
                 </Link>
               );
             })}
@@ -184,13 +242,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto bg-background p-4 md:p-6">
-          {children}
+        <main className="flex-1 overflow-y-auto bg-background">
+          <div className="p-4 md:p-6 space-y-6">
+          <ScanActivityTray />
+            {children}
+          </div>
         </main>
       </div>
 
-
-      <AIAssistant />
+  
+      {/* <AIAssistant /> */}
     </div>
   );
 }

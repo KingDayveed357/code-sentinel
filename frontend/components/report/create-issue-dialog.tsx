@@ -15,7 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Github, AlertCircle } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import type { VulnerabilityData } from "./vulnerability-card";
 
 interface CreateIssueDialogProps {
@@ -33,7 +33,7 @@ export function CreateIssueDialog({
   projectId,
   scanId,
 }: CreateIssueDialogProps) {
-  const { toast } = useToast();
+  
   const [creating, setCreating] = useState(false);
   const [selectedVulns, setSelectedVulns] = useState<Set<string>>(new Set());
 
@@ -75,10 +75,16 @@ export function CreateIssueDialog({
       const results = await Promise.all(promises);
       const successful = results.filter((r) => r?.success).length;
 
-      toast({
-        title: "Issues Created",
-        description: `Successfully created ${successful} GitHub issue(s)`,
-      });
+      if (successful === 0) {
+        toast(
+          <div>
+            <strong>No Issues Created</strong>
+            <p>No issues were created</p>
+          </div>
+        );
+      } else {
+        toast.success(`Created ${successful} issue(s)`);
+      }
 
       onOpenChange(false);
       setSelectedVulns(new Set());
@@ -86,11 +92,12 @@ export function CreateIssueDialog({
       // Refresh page to show updated issues
       window.location.reload();
     } catch (err: any) {
-      toast({
-        title: "Failed to Create Issues",
-        description: err.message || "An error occurred",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Create Issues</strong>
+          <p>{err.message}</p>
+        </div>
+      );
     } finally {
       setCreating(false);
     }

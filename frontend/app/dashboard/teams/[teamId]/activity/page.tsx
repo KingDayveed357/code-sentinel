@@ -18,12 +18,12 @@ import {
 import { Loader2, AlertCircle, ArrowLeft, Activity as ActivityIcon } from "lucide-react";
 import Link from "next/link";
 import { teamsApi, type TeamActivity } from "@/lib/api/teams";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 
 
 
 export default function TeamActivityPage({ params }: {params: Promise<{ teamId: string }>}) {
-  const { toast } = useToast();
+  
   const [loading, setLoading] = useState(true);
   const [activities, setActivities] = useState<TeamActivity[]>([]);
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
@@ -43,11 +43,12 @@ export default function TeamActivityPage({ params }: {params: Promise<{ teamId: 
       setActivities(data.activities);
       setPagination(data.pagination);
     } catch (error: any) {
-      toast({
-        title: "Failed to Load Activity",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
+      toast.error(
+        <div>
+          <strong>Failed to Load Activity</strong>
+          <p>{error.message}</p>
+        </div>
+      );
     } finally {
       setLoading(false);
     }

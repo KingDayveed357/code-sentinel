@@ -29,8 +29,8 @@
   --muted: oklch(0.96 0.005 240);
   --muted-foreground: oklch(0.5 0.01 240);
 
-  /* Accent - Teal (modern, tech) */
-  --accent: oklch(0.48 0.12 200);
+  /* Accent - Blue (#0082e6) */
+  --accent: oklch(0.6 0.18 240);
   --accent-foreground: oklch(0.99 0 0);
 
   /* Success - Green */
@@ -51,11 +51,16 @@
   --ring: oklch(0.35 0.15 250);
 
   /* Chart colors for vulnerability metrics */
-  --chart-1: oklch(0.55 0.22 25); /* Critical - Red */
-  --chart-2: oklch(0.65 0.18 40); /* High - Orange */
-  --chart-3: oklch(0.7 0.15 80); /* Medium - Amber */
-  --chart-4: oklch(0.75 0.12 120); /* Low - Yellow-green */
-  --chart-5: oklch(0.55 0.15 145); /* Info - Green */
+  --chart-1: oklch(0.55 0.22 25);
+  /* Critical - Red */
+  --chart-2: oklch(0.65 0.18 40);
+  /* High - Orange */
+  --chart-3: oklch(0.7 0.15 80);
+  /* Medium - Amber */
+  --chart-4: oklch(0.75 0.12 120);
+  /* Low - Yellow-green */
+  --chart-5: oklch(0.55 0.15 145);
+  /* Info - Green */
 
   /* Border radius */
   --radius: 0.5rem;
@@ -97,9 +102,9 @@
   --muted: oklch(0.22 0.02 240);
   --muted-foreground: oklch(0.65 0.01 240);
 
-  /* Accent - Brighter teal for dark mode */
-  --accent: oklch(0.6 0.15 200);
-  --accent-foreground: oklch(0.12 0.01 240);
+  /* Accent - Blue for dark mode */
+  --accent: oklch(0.65 0.2 240);
+  --accent-foreground: oklch(0.99 0 0);
 
   /* Success */
   --success: oklch(0.6 0.15 145);
@@ -227,10 +232,12 @@
 /* Scan pulse animation for loading states */
 @layer utilities {
   @keyframes scan-pulse {
+
     0%,
     100% {
       opacity: 1;
     }
+
     50% {
       opacity: 0.5;
     }
