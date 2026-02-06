@@ -2,15 +2,6 @@
 // API routes for unified vulnerabilities
 
 import type { FastifyInstance } from "fastify";
-// import {
-//   vulnerabilityListSchema,
-//   vulnerabilityIdSchema,
-//   vulnerabilityDetailQuerySchema,
-//   updateVulnerabilityStatusSchema,
-//   assignVulnerabilitySchema,
-//   generateAIExplanationSchema,
-//   workspaceIdSchema,
-// } from "./schemas";
 import {
   getVulnerabilitiesByWorkspace,
   getVulnerabilityDetails,
@@ -25,16 +16,6 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
   // Get all vulnerabilities for workspace (global view)
   fastify.get(
     "/:workspaceId/vulnerabilities",
-    // {
-    //   schema: {
-    //     params: workspaceIdSchema,
-    //     querystring: vulnerabilityListSchema,
-    //     tags: ["vulnerabilities-unified"],
-    //     summary: "Get all vulnerabilities for workspace",
-    //     description:
-    //       "Retrieve deduplicated vulnerabilities across all projects in a workspace with pagination (15 items per page)",
-    //   },
-    // },
     async (request, reply) => {
       const { workspaceId } = request.params as { workspaceId: string };
       const filters = request.query as any;

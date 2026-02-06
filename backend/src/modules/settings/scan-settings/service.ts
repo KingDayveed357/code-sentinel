@@ -1,5 +1,5 @@
 // src/modules/settings/scan-settings.service.ts
-// ===================================================================
+
 import type { FastifyInstance } from 'fastify';
 
 export interface ScanSettings {
@@ -16,7 +16,7 @@ export interface ScanSettings {
   sound_enabled: boolean;
   sound_on_complete: boolean;
   sound_on_critical: boolean;
-  default_scan_type: 'quick' | 'full'; // ✅ FIX: Removed 'custom'
+  default_scan_type: 'quick' | 'full'; 
   default_scanners: {
     sast: boolean;
     sca: boolean;

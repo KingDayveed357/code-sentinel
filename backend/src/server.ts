@@ -91,7 +91,7 @@ export function buildServer() {
 
     app.log.info('Scan queue and workers initialized');
 
-    // ✅ PRODUCTION FIX: Start stalled scan detector
+    // Start stalled scan detector
     const { runScanHealthCheck } = await import('./jobs/stalled-scan-detector');
     
     // Run immediately on startup
