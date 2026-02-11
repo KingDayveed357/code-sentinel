@@ -21,7 +21,7 @@ export class OSVScanner extends BaseScanner {
   readonly name = "osv";
   readonly type = "sca" as const;
 
-  async scan(workspacePath: string, scanId: string): Promise<ScanResult> {
+  async scan(workspacePath: string, scanId: string, scanType?: 'quick' | 'full'): Promise<ScanResult> {
     const startTime = Date.now();
 
     try {

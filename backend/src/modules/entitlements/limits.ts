@@ -1,7 +1,7 @@
 export const PLAN_LIMITS = {
   Free: {
     repositories: 5,
-    scans_per_month: 10,
+    scans_per_month: 30,
     concurrent_scans: 1,
     auto_scan: false,
     team_members: 1,

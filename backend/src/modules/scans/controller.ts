@@ -1,141 +1,104 @@
-// src/modules/scans/controller.ts
-import type { FastifyRequest, FastifyReply } from "fastify";
-import * as service from "./service";
-import {
-  startScanSchema,
-  scanHistorySchema,
-  scanIdSchema,
-  repoIdSchema,
-} from "./schemas";
+
+import { FastifyReply, FastifyRequest, FastifyInstance } from "fastify";
+import { ScansService } from "./service";
+import { ScansRepository } from "./repository";
+import type { ScanFilters } from "./types";
+
+// Helper to get service instance
+const getService = (fastify: FastifyInstance) => {
+  return new ScansService(new ScansRepository(fastify), fastify);
+};
+
+export async function listScansController(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const { workspaceId } = request.params as { workspaceId: string };
+  const filters = request.query as ScanFilters;
+  const services = new ScansService(new ScansRepository(fastify), fastify);
+  
+  const result = await services.getScans(workspaceId, filters);
+  return reply.send(result);
+}
 
 export async function startScanController(
-  request: FastifyRequest<{ Params: any; Body: any }>,
+  fastify: FastifyInstance,
+  request: FastifyRequest,
   reply: FastifyReply
 ) {
-  const workspaceId = request.workspace!.id;
-  const userId = request.profile!.id;
-  const userPlan = request.profile!.plan;
-  const { repoId } = repoIdSchema.parse(request.params);
-  const { branch, scan_type } = startScanSchema.parse(request.body);
+  const { workspaceId } = request.params as { workspaceId: string };
+  const { repositoryId, branch, scanType } = request.body as { repositoryId: string; branch: string; scanType?: "quick" | "full" };
 
-  const result = await service.startScan(
-    request.server,
+  const userId = request.supabaseUser?.id;
+  // Use workspace plan if available, otherwise fallback to user plan or Free
+  const plan = request.workspace?.plan || request.profile?.plan || 'Free';
+
+  if (!userId) {
+    throw fastify.httpErrors.unauthorized("User context missing");
+  }
+
+  const services = new ScansService(new ScansRepository(fastify), fastify);
+  const result = await services.startScan(
     workspaceId,
     userId,
-    userPlan,
-    repoId,
+    plan,
+    repositoryId,
     branch,
-    scan_type
+    scanType || "quick"
   );
-
-  return reply.status(201).send(result);
-}
-
-export async function getScanHistoryController(
-  request: FastifyRequest<{ Params: any; Querystring: any }>,
-  reply: FastifyReply
-) {
-  const workspaceId = request.workspace!.id;
-  const { repoId } = repoIdSchema.parse(request.params);
-  const queryParams = scanHistorySchema.parse(request.query);
-  
-  // ✅ TRUST FIX: Extract filter parameters
-  const { page, limit } = queryParams;
-  const status = (request.query as any).status;
-  const severity = (request.query as any).severity;
-
-  const result = await service.getScanHistory(
-    request.server,
-    workspaceId,
-    repoId,
-    page,
-    limit,
-    status,
-    severity
-  );
-
   return reply.send(result);
 }
 
-export async function getScanStatusController(
-  request: FastifyRequest<{ Params: any }>,
+export async function getScanStatsController(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
   reply: FastifyReply
 ) {
-  const workspaceId = request.workspace!.id;
-  const { scanId } = scanIdSchema.parse(request.params);
-
-  const result = await service.getScanStatus(
-    request.server,
-    workspaceId,
-    scanId
-  );
-
+  const { workspaceId } = request.params as { workspaceId: string };
+  const services = new ScansService(new ScansRepository(fastify), fastify);
+  const result = await services.getScanStats(workspaceId);
   return reply.send(result);
 }
 
-export async function getScanLogsController(
-  request: FastifyRequest<{ Params: any }>,
+export async function getScanDetailsController(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
   reply: FastifyReply
 ) {
-  const workspaceId = request.workspace!.id;
-  const { scanId } = scanIdSchema.parse(request.params);
-
-  const result = await service.getScanLogs(request.server, workspaceId, scanId);
-
+  const { workspaceId, scanId } = request.params as { workspaceId: string; scanId: string };
+  const services = new ScansService(new ScansRepository(fastify), fastify);
+  const result = await services.getScanDetails(workspaceId, scanId);
   return reply.send(result);
-}
-
-// Progress is tracked in the scans table (progress_percentage, progress_stage)
-// Frontend polls the scan detail endpoint to get progress updates
-
-export async function exportScanController(
-  request: FastifyRequest<{ Params: any; Querystring: any }>,
-  reply: FastifyReply
-) {
-  const workspaceId = request.workspace!.id;
-  const { scanId } = scanIdSchema.parse(request.params);
-  const format = (request.query as any).format || "json";
-
-  if (!["json", "csv"].includes(format)) {
-    throw request.server.httpErrors.badRequest(
-      "Invalid format. Use json or csv"
-    );
-  }
-
-  const result = await service.exportScanResults(
-    request.server,
-    workspaceId,
-    scanId,
-    format
-  );
-
-  if (format === "json") {
-    return reply
-      .header("Content-Type", "application/json")
-      .header(
-        "Content-Disposition",
-        `attachment; filename="scan-${scanId}.json"`
-      )
-      .send(result);
-  } else {
-    return reply
-      .header("Content-Type", "text/csv")
-      .header(
-        "Content-Disposition",
-        `attachment; filename="scan-${scanId}.csv"`
-      )
-      .send(result);
-  }
 }
 
 export async function cancelScanController(
-  request: FastifyRequest<{ Params: any }>,
+  fastify: FastifyInstance,
+  request: FastifyRequest,
   reply: FastifyReply
 ) {
-  const workspaceId = request.workspace!.id;
-  const { scanId } = scanIdSchema.parse(request.params);
+  const { workspaceId, scanId } = request.params as { workspaceId: string; scanId: string };
+  const services = new ScansService(new ScansRepository(fastify), fastify);
+  const result = await services.cancelScan(workspaceId, scanId);
+  return reply.send(result);
+}
 
-  const result = await service.cancelScan(request.server, workspaceId, scanId);
+export async function exportScanResultsController(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const { workspaceId, scanId } = request.params as { workspaceId: string; scanId: string };
+  const { format } = request.query as { format: "json" | "csv" };
+  const services = new ScansService(new ScansRepository(fastify), fastify);
+
+  const result = await services.exportScanResults(workspaceId, scanId, format);
+  
+  if (format === "csv") {
+    reply.header("Content-Type", "text/csv");
+    reply.header("Content-Disposition", `attachment; filename="scan-${scanId}.csv"`);
+    return reply.send(result);
+  }
 
   return reply.send(result);
 }

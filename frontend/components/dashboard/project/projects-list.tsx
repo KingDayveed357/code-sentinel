@@ -90,19 +90,20 @@ export function ProjectsList() {
       ? [...workspaceKeys.projects(workspace.id), 'list', { searchQuery, providerFilter, statusFilter, sortBy, page, limit }]
       : ['projects', 'list', 'none'],
     queryFn: async () => {
+      if (!workspace) throw new Error('Workspace not available');
       console.log('📦 Fetching projects for workspace:', workspace?.name);
       const params: any = { page, limit };
       if (searchQuery) params.search = searchQuery;
       if (providerFilter !== "all") params.provider = providerFilter;
       if (statusFilter !== "all") params.status = statusFilter;
 
-      const data = await repositoriesApi.list(params);
+      const data = await repositoriesApi.list(workspace.id, params);
       
       // Fetch latest scan for each project
       const projectsWithScans = await Promise.all(
         data.repositories.map(async (project) => {
           try {
-            const scansData = await scansApi.getHistory(project.id, { page: 1, limit: 1 });
+            const scansData = await scansApi.getHistory(workspace!.id, project.id, { page: 1, limit: 1 });
             return {
               ...project,
               latestScan: scansData.scans.length > 0 ? scansData.scans[0] : null,
@@ -162,7 +163,7 @@ export function ProjectsList() {
 
   const handleSync = async () => {
     try {
-      await repositoriesApi.sync();
+      await repositoriesApi.sync(workspace.id);
       refetch();
       toast.success("Projects synced successfully");
     } catch (err: any) {
@@ -182,7 +183,7 @@ export function ProjectsList() {
     try {
       setScanningProjects(prev => new Set(prev).add(projectId));
       
-      const result = await scansApi.start(projectId, {
+      const result = await scansApi.start(workspace!.id, projectId, {
         branch: defaultBranch || "main",
         scan_type: "quick",
       });
@@ -676,12 +677,13 @@ export function ProjectsList() {
         </>
       )}
 
-      <DisconnectProjectDialog 
+      {/* <DisconnectProjectDialog 
         project={projectToDelete}
+        workspaceId={workspace!.id}
         open={!!projectToDelete}
         onOpenChange={(open) => !open && setProjectToDelete(null)}
         onSuccess={onDisconnectSuccess}
-      />
+      /> */}
     </div>
   );
 }

@@ -134,7 +134,7 @@ export default function IntegrationsPage() {
       : ['integrations', 'none'],
     queryFn: async () => {
       console.log('🔌 Fetching integrations for workspace:', workspace?.name);
-      return integrationsApi.getIntegrations();
+      return integrationsApi.getIntegrations(workspace!.id);
     },
     enabled: !!workspace,
     staleTime: 30 * 1000, // 30 seconds

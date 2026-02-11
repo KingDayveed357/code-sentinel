@@ -9,7 +9,7 @@
 import type { FastifyInstance } from 'fastify';
 import { AIClientService } from './aiClient';
 import { TitleGeneratorService } from './titleGenerator';
-import { VulnerabilityExplainerService } from '../../ai/vulnerability-explainer';
+import { VulnerabilityExplainerService } from './vulnerability-explainer';
 
 let aiClientInstance: AIClientService | null = null;
 let titleGeneratorInstance: TitleGeneratorService | null = null;

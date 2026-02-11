@@ -1,20 +1,29 @@
 import type { FastifyInstance } from 'fastify';
 import { verifyAuth, loadProfile } from '../../middleware/auth';
-import { requireAuth, requireProfile } from '../../middleware/gatekeepers';
+import { resolveWorkspace } from '../../middleware/workspace';
+import { requireAuth, requireProfile, requireWorkspace } from '../../middleware/gatekeepers';
 import { EntitlementsService } from './service';
 
 export default async function entitlementsRoutes(fastify: FastifyInstance) {
   const service = new EntitlementsService(fastify);
-  const preHandler = [verifyAuth, loadProfile, requireAuth, requireProfile];
+  const preHandler = [
+    verifyAuth, 
+    loadProfile, 
+    requireAuth, 
+    requireProfile,
+    resolveWorkspace,
+    requireWorkspace
+  ];
 
-  /**p
-   * GET /me/entitlements
-   * Get user's plan limits and current usage
+  /**
+   * GET /api/workspaces/:workspaceId/entitlements
+   * Get workspace's plan limits and current usage
    */
-  fastify.get('/entitlements', { preHandler }, async (request, reply) => {
-    const { id: userId, plan } = request.profile!;
+  fastify.get('/:workspaceId/entitlements', { preHandler }, async (request, reply) => {
+    const { workspaceId } = request.params as { workspaceId: string };
+    const { plan } = request.workspace!;
 
-    const usage = await service.getUserUsage(userId, plan);
+    const usage = await service.getUserUsage(workspaceId, plan);
 
     return reply.send({
       success: true,
@@ -23,14 +32,14 @@ export default async function entitlementsRoutes(fastify: FastifyInstance) {
   });
 
   /**
-   * GET /me/features
+   * GET /api/workspaces/:workspaceId/entitlements/features
    * Check specific feature access or get all features for plan
    */
   fastify.get<{ Querystring: { feature?: string } }>(
-    '/me/features',
+    '/:workspaceId/entitlements/features',
     { preHandler },
     async (request, reply) => {
-      const { plan } = request.profile!;
+      const { plan } = request.workspace!;
       const { feature } = request.query;
 
       // If feature is specified, check single feature

@@ -1,4 +1,4 @@
-import { ProjectBreadcrumbs } from "@/components/dashboard/project/project-breadcrumbs";
+import { Breadcrumbs } from "@/components/dashboard/project/project-breadcrumbs";
 
 export default async function ProjectLayout({
   params,
@@ -11,7 +11,7 @@ export default async function ProjectLayout({
 
   return (
     <div className="flex flex-col h-full">
-      <ProjectBreadcrumbs projectId={projectId} />
+      <Breadcrumbs  />
       {children}
     </div>
   );

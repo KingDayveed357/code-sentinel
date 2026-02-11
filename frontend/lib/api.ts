@@ -15,19 +15,8 @@ interface FetchOptions extends RequestInit {
  */
 function getActiveWorkspaceId(): string | null {
   if (typeof window === 'undefined') return null;
-  
-  // First priority: URL parameter
-  const urlParams = new URLSearchParams(window.location.search);
-  const workspaceFromUrl = urlParams.get('workspace');
-  
-  if (workspaceFromUrl) {
-    // Sync to localStorage for consistency
-    localStorage.setItem('active_workspace_id', workspaceFromUrl);
-    return workspaceFromUrl;
-  }
-  
-  // Fallback: localStorage
-  return localStorage.getItem('active_workspace_id');
+  const id = localStorage.getItem('active_workspace_id');
+  return (id && id !== 'undefined' && id !== 'null') ? id : null;
 }
 
 export async function apiFetch(endpoint: string, options: FetchOptions = {}) {

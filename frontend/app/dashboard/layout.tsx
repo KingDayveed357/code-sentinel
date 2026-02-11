@@ -3,6 +3,7 @@ import type React from "react"
 import { DashboardShell } from "@/components/dashboard/layout/dashboard-shell"
 import { RequireOnboardingCompleted } from "@/components/guards/require-onboarding-completed";
 import { ScanStatusBanner } from "@/components/scans/scan-status-banner";
+import { WorkspaceRouteGuard } from "@/components/guards/workspace-route-guard";
 
 export default function DashboardLayout({
   children,
@@ -12,9 +13,10 @@ export default function DashboardLayout({
   return (
   <RequireOnboardingCompleted>
   <DashboardShell>
- 
-    {children}
-    </DashboardShell>
-   </RequireOnboardingCompleted>
+    <WorkspaceRouteGuard>
+      {children}
+    </WorkspaceRouteGuard>
+  </DashboardShell>
+  </RequireOnboardingCompleted>
 )}
 

@@ -10,9 +10,11 @@ export interface UserProfile {
     email: string | null;
     full_name: string | null;
     avatar_url: string | null;
-    plan: "Free" | "Team" | "Enterprise";
     onboarding_completed: boolean;
-    role?: string | null;
+    // Global system role (e.g. 'admin', 'user') - distinct from workspace role
+    role?: string | null; 
+    // Plan might be legacy here if moving to workspace-based billing
+    plan: "Free" | "Dev" | "Team" | "Enterprise";
     created_at?: string;
     updated_at?: string;
 }
@@ -27,6 +29,20 @@ export interface SupabaseUser {
     created_at?: string;
 }
 
+export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'viewer';
+
+export interface WorkspaceContext {
+    id: string;
+    name: string;
+    slug: string;
+    type: 'personal' | 'team';
+    owner_id: string | null;
+    plan: string;
+    settings: any;
+    created_at: string;
+    updated_at: string;
+}
+
 declare module "fastify" {
     interface FastifyInstance {
         supabase: SupabaseClient;
@@ -39,22 +55,14 @@ declare module "fastify" {
 
         // Attached by loadProfile middleware
         profile?: UserProfile;
-    }
-}
+        
+        // Convenience property - same as profile
+        user?: UserProfile;
 
-declare module 'fastify' {
-    interface FastifyRequest {
-        workspace?: {
-            id: string;
-            name: string;
-            slug: string;
-            type: 'personal' | 'team';
-            owner_id: string | null;
-            team_id: string | null;
-            plan: string;
-            settings: any;
-            created_at: string;
-            updated_at: string;
-        };
+        // Attached by resolveWorkspace middleware
+        workspace?: WorkspaceContext;
+        
+        // The authenticated user's role within the current workspace
+        workspaceRole?: WorkspaceRole;
     }
 }

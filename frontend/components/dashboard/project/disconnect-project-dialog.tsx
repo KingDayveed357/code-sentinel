@@ -19,6 +19,7 @@ import { repositoriesApi } from "@/lib/api/repositories";
 
 interface DisconnectProjectDialogProps {
   project: { id: string; name: string } | null;
+  workspaceId: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   trigger?: React.ReactNode;
@@ -28,6 +29,7 @@ interface DisconnectProjectDialogProps {
 
 export function DisconnectProjectDialog({
   project,
+  workspaceId,
   open,
   onOpenChange,
   trigger,
@@ -44,7 +46,7 @@ export function DisconnectProjectDialog({
 
     try {
       setDeleting(true);
-      await repositoriesApi.delete(project.id);
+      await repositoriesApi.delete(workspaceId, project.id);
 
       toast.success("Project disconnected");
 

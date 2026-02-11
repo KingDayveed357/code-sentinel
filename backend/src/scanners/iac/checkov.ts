@@ -15,7 +15,7 @@ export class CheckovScanner extends BaseScanner {
   readonly name = "checkov";
   readonly type = "iac" as const;
 
-  async scan(workspacePath: string, scanId: string): Promise<ScanResult> {
+  async scan(workspacePath: string, scanId: string, scanType?: 'quick' | 'full'): Promise<ScanResult> {
     const startTime = Date.now();
 
     try {

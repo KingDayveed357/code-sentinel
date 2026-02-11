@@ -50,6 +50,31 @@ export interface Provider {
   account?: GitHubAccount | null;
 }
 
+export interface RepositorySettings {
+  auto_scan_enabled: boolean;
+  scan_on_push: boolean;
+  scan_on_pr: boolean;
+  branch_filter: string[];
+  excluded_branches: string[];
+  default_scan_type: "quick" | "full";
+  auto_create_issues: boolean;
+  issue_severity_threshold: "critical" | "high" | "medium" | "low";
+  issue_labels: string[];
+  issue_assignees: string[];
+}
+
+export interface WebhookInfo {
+  github_webhook_id: string | null;
+  last_delivery_status: string | null;
+  failure_count: number;
+}
+
+export interface RepositorySettingsResponse {
+  settings: RepositorySettings;
+  webhook_status: "active" | "inactive" | "failed" | null;
+  webhook_info: WebhookInfo | null;
+}
+
 export interface ListRepositoriesResponse {
   repositories: Repository[];
   total: number;
@@ -83,16 +108,17 @@ export const repositoriesApi = {
   /**
    * List repositories with filters and pagination
    */
-  list: async (params?: {
-    search?: string;
-    provider?: "github" | "gitlab" | "bitbucket";
-    private?: boolean;
-    status?: 
-      | "active" | "inactive" | "error"  // Repository statuses
-      | "completed" | "running" | "normalizing" | "ai_enriching" | "failed" | "pending" | "cancelled" | "never_scanned";  // Scan statuses
-    page?: number;
-    limit?: number;
-  }): Promise<ListRepositoriesResponse> => {
+  list: async (
+    workspaceId: string,
+    params?: {
+      search?: string;
+      provider?: "github" | "gitlab" | "bitbucket";
+      private?: boolean;
+      status?: string;
+      page?: number;
+      limit?: number;
+    }
+  ): Promise<ListRepositoriesResponse> => {
     const queryParams = new URLSearchParams();
     if (params?.search) queryParams.set("search", params.search);
     if (params?.provider) queryParams.set("provider", params.provider);
@@ -102,27 +128,34 @@ export const repositoriesApi = {
     if (params?.limit) queryParams.set("limit", String(params.limit));
 
     const query = queryParams.toString();
-    return apiFetch(`/repositories${query ? `?${query}` : ""}`, { requireAuth: true });
+    return apiFetch(`/workspaces/${workspaceId}/repositories${query ? `?${query}` : ""}`, { 
+      requireAuth: true 
+    });
   },
 
   /**
    * Get connected Git providers
    */
-  getProviders: async (): Promise<GetProvidersResponse> => {
-    return apiFetch("/repositories/providers", { requireAuth: true });
+  getProviders: async (workspaceId: string): Promise<GetProvidersResponse> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/providers`, { 
+      requireAuth: true 
+    });
   },
 
   /**
    * Fetch available GitHub repositories for import
    */
-  getGitHubRepos: async (): Promise<GetGitHubReposResponse> => {
-    return apiFetch("/repositories/github/repos", { requireAuth: true });
+  getGitHubRepos: async (workspaceId: string): Promise<GetGitHubReposResponse> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/github/repos`, { 
+      requireAuth: true 
+    });
   },
 
   /**
    * Import selected repositories
    */
   import: async (
+    workspaceId: string,
     repositories: Array<{
       name: string;
       full_name: string;
@@ -134,7 +167,7 @@ export const repositoriesApi = {
     }>,
     provider: "github" | "gitlab" | "bitbucket" = "github"
   ): Promise<ImportRepositoriesResponse> => {
-    return apiFetch("/repositories/import", {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/import`, {
       method: "POST",
       requireAuth: true,
       body: JSON.stringify({ repositories, provider }),
@@ -144,8 +177,8 @@ export const repositoriesApi = {
   /**
    * Sync repositories (re-fetch from provider)
    */
-  sync: async (): Promise<{ success: boolean; message: string }> => {
-    return apiFetch("/repositories/sync", {
+  sync: async (workspaceId: string): Promise<{ success: boolean; message: string }> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/sync`, {
       method: "POST",
       requireAuth: true,
     });
@@ -154,14 +187,17 @@ export const repositoriesApi = {
   /**
    * Get single repository by ID
    */
-  getById: async (id: string): Promise<Repository> => {
-    return apiFetch(`/repositories/${id}`, { requireAuth: true });
+  getById: async (workspaceId: string, id: string): Promise<Repository> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/${id}`, { 
+      requireAuth: true 
+    });
   },
 
   /**
    * Update repository settings
    */
   update: async (
+    workspaceId: string,
     id: string,
     updates: {
       name?: string;
@@ -169,7 +205,7 @@ export const repositoriesApi = {
       status?: "active" | "inactive" | "error";
     }
   ): Promise<Repository> => {
-    return apiFetch(`/repositories/${id}`, {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/${id}`, {
       method: "PATCH",
       requireAuth: true,
       body: JSON.stringify(updates),
@@ -179,8 +215,61 @@ export const repositoriesApi = {
   /**
    * Delete/disconnect repository
    */
-  delete: async (id: string): Promise<{ success: boolean }> => {
-    return apiFetch(`/repositories/${id}`, {
+  delete: async (workspaceId: string, id: string): Promise<{ success: boolean }> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/${id}`, {
+      method: "DELETE",
+      requireAuth: true,
+    });
+  },
+
+  /**
+   * Get repository settings and webhook status
+   */
+  getSettings: async (
+    workspaceId: string,
+    id: string
+  ): Promise<RepositorySettingsResponse> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/${id}/settings`, {
+      requireAuth: true,
+    });
+  },
+
+  /**
+   * Update repository settings (auto-scan, webhooks, etc.)
+   */
+  updateSettings: async (
+    workspaceId: string,
+    id: string,
+    settings: Partial<RepositorySettings>
+  ): Promise<{ success: boolean; settings: RepositorySettings }> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/${id}/settings`, {
+      method: "PATCH",
+      requireAuth: true,
+      body: JSON.stringify(settings),
+    });
+  },
+
+  /**
+   * Register GitHub webhook for repository
+   */
+  registerWebhook: async (
+    workspaceId: string,
+    id: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/${id}/webhook/register`, {
+      method: "POST",
+      requireAuth: true,
+    });
+  },
+
+  /**
+   * Delete GitHub webhook for repository
+   */
+  deleteWebhook: async (
+    workspaceId: string,
+    id: string
+  ): Promise<{ success: boolean }> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/${id}/webhook`, {
       method: "DELETE",
       requireAuth: true,
     });

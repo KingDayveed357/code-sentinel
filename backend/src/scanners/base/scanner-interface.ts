@@ -47,7 +47,7 @@ export abstract class BaseScanner {
 
   constructor(protected fastify: FastifyInstance) {}
 
-  abstract scan(workspacePath: string, scanId: string): Promise<ScanResult>;
+  abstract scan(workspacePath: string, scanId: string, scanType?: 'quick' | 'full'): Promise<ScanResult>;
 
   protected generateId(): string {
     return crypto.randomUUID();

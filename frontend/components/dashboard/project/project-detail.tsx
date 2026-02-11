@@ -1,7 +1,9 @@
 // components/dashboard/project-detail.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useWorkspace } from "@/hooks/use-workspace";
+import { workspaceKeys } from "@/hooks/use-dashboard-data";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,126 +36,108 @@ import type { Vulnerability } from "@/lib/api/vulnerabilities";
 import { toast } from "sonner";
 
 
+
+
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const router = useRouter();
-  const [project, setProject] = useState<Repository | null>(null);
-  const [recentScans, setRecentScans] = useState<Scan[]>([]);
-  const [topVulnerabilities, setTopVulnerabilities] = useState<Vulnerability[]>([]);
-  const [totalScans, setTotalScans] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
-  const [vulnsLoading, setVulnsLoading] = useState(false);
-  const [vulnsError, setVulnsError] = useState<string | null>(null);
+  const { workspace } = useWorkspace();
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    loadData();
-  }, [projectId]);
+  // React Query for fetching project details
+  const { 
+    data: project, 
+    isLoading: projectLoading, 
+    error: projectError 
+  } = useQuery({
+    queryKey: workspace ? workspaceKeys.projectDetail(workspace.id, projectId) : ['project', projectId],
+    queryFn: () => repositoriesApi.getById(workspace!.id, projectId),
+    enabled: !!workspace && !!projectId
+  });
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
+  // React Query for fetching scan history
+  const {
+    data: scansData,
+    isLoading: scansLoading,
+    refetch: refetchScans
+  } = useQuery({
+    queryKey: workspace ? ['workspace', workspace.id, 'scans', { repository_id: projectId, limit: 5 }] : ['scans', projectId],
+    queryFn: () => scansApi.getHistory(workspace!.id, projectId, { page: 1, limit: 5 }),
+    enabled: !!workspace && !!projectId
+  });
 
-      const [projectData, scansData] = await Promise.all([
-        repositoriesApi.getById(projectId),
-        scansApi.getHistory(projectId, { page: 1, limit: 5 }),
-      ]);
+  const recentScans = scansData?.scans || [];
+  const totalScans = scansData?.total || 0;
+  const loading = projectLoading || scansLoading;
+  const error = (projectError as Error)?.message || null;
+  const latestScan = recentScans[0] || null;
 
-      setProject(projectData);
-      setRecentScans(scansData.scans);
-      setTotalScans(scansData.total);
+  // React Query for top vulnerabilities - dependent on latest scan
+  const {
+    data: topVulnerabilities = [],
+    isLoading: vulnsLoading,
+    error: vulnsErrorObj
+  } = useQuery({
+    queryKey: workspace && latestScan ? ['workspace', workspace.id, 'scans', latestScan.id, 'vulnerabilities', 'top'] : ['scans', 'vulns', 'skip'],
+    queryFn: async () => {
+       if (!latestScan || !workspace) return [];
+       const vulnsData = await vulnerabilitiesApi.getByScan(workspace.id, latestScan.id);
+       
+        // Client-side filtering/sorting logic similar to before
+        const severityOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+        const topVulns = vulnsData.vulnerabilities
+            .filter(v => v.severity === 'critical' || v.severity === 'high')
+            .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
+            .slice(0, 5);
+        
+        if (topVulns.length < 5) {
+            const remaining = vulnsData.vulnerabilities
+            .filter(v => v.severity !== 'critical' && v.severity !== 'high')
+            .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
+            .slice(0, 5 - topVulns.length);
+            topVulns.push(...remaining);
+        }
+        return topVulns;
+    },
+    enabled: !!workspace && !!latestScan && latestScan.status === 'completed'
+  });
 
-      // Load top 5 vulnerabilities from the latest completed scan
-      const latestCompletedScan = scansData.scans.find(s => s.status === 'completed');
-      if (latestCompletedScan) {
-        loadTopVulnerabilities(latestCompletedScan.id);
-      }
-    } catch (err: any) {
-      console.error('Failed to load project data:', err);
-      setError(err.message || "Failed to load project");
-    } finally {
-      setLoading(false);
+  const vulnsError = (vulnsErrorObj as Error)?.message || null;
+
+  // Mutation for starting scan
+  const startScanMutation = useMutation({
+    mutationFn: async () => {
+        if (!workspace || !project) return;
+        return scansApi.start(workspace.id, projectId, {
+            branch: project.default_branch,
+            scan_type: "full",
+        });
+    },
+    onSuccess: () => {
+        toast.success(
+            <div>
+              <strong>Scan started</strong>
+              <p>Scanning {project?.name}... Check the banner above for progress.</p>
+            </div>
+        );
+        // Invalidate queries to refresh data
+        queryClient.invalidateQueries({ queryKey: ['workspace', workspace?.id, 'scans'] });
+        setTimeout(() => refetchScans(), 2000); // Polling simulation
+    },
+    onError: (err: any) => {
+        toast.error(
+            <div>
+              <strong>Failed to start scan</strong>
+              <p className="text-sm">{err.message || "An error occurred"}</p>
+            </div>
+        );
     }
+  });
+
+  const handleRunScan = () => {
+      startScanMutation.mutate();
   };
+  const isScanning = startScanMutation.isPending;
 
-  const loadTopVulnerabilities = async (scanId: string) => {
-    try {
-      setVulnsLoading(true);
-      setVulnsError(null);
-      
-      console.log('🔍 Loading top vulnerabilities for scan:', scanId);
-      
-      // Fetch vulnerabilities without severity filter to avoid API validation error
-      const vulnsData = await vulnerabilitiesApi.getVulnerabilitiesByScan(
-        scanId,
-        { limit: 100 } // Get more to filter client-side
-      );
-      
-      console.log('✅ Loaded vulnerabilities:', vulnsData);
-      
-      // Filter and sort on client side to get top 5 critical/high severity
-      const severityOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-      const topVulns = vulnsData.vulnerabilities
-        .filter(v => v.severity === 'critical' || v.severity === 'high')
-        .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
-        .slice(0, 5);
-      
-      // If we don't have 5 critical/high, fill with medium/low
-      if (topVulns.length < 5) {
-        const remaining = vulnsData.vulnerabilities
-          .filter(v => v.severity !== 'critical' && v.severity !== 'high')
-          .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
-          .slice(0, 5 - topVulns.length);
-        topVulns.push(...remaining);
-      }
-      
-      setTopVulnerabilities(topVulns);
-    } catch (err: any) {
-      console.error('❌ Failed to load vulnerabilities:', err);
-      setVulnsError(err.message || 'Failed to load vulnerabilities');
-    } finally {
-      setVulnsLoading(false);
-    }
-  };
-
-  const handleRunScan = async () => {
-    if (!project) return;
-
-    try {
-      setIsScanning(true);
-      setError(null);
-
-      const result = await scansApi.start(projectId, {
-        branch: project.default_branch,
-        scan_type: "full",
-      });
-
-      toast.success(
-        <div>
-          <strong>Scan started</strong>
-          <p>Scanning {project.name}... Check the banner above for progress.</p>
-        </div>
-      );
-
-      // Reload data to show new scan
-      setTimeout(() => {
-        loadData();
-      }, 2000);
-
-      // NO REDIRECT - Banner will show scan status
-    } catch (err: any) {
-      toast.error(
-        <div>
-          <strong>Failed to start scan</strong>
-          <p className="text-sm">{err.message || "An error occurred"}</p>
-        </div>
-      );
-      setError(err.message || "Failed to start scan");
-    } finally {
-      setIsScanning(false);
-    }
-  };
 
   const calculateRiskScore = (scan: Scan | null | undefined): number => {
     if (!scan || scan.status !== 'completed') return 0;
@@ -261,7 +245,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     return null;
   };
 
-  const latestScan = recentScans[0] || null;
+  // const latestScan = recentScans[0] || null;
   const riskScore = calculateRiskScore(latestScan);
   const riskColor = getRiskScoreColor(riskScore);
 

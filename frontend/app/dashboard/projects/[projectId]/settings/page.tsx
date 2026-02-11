@@ -1,5 +1,6 @@
 'use client'
 import { use, useEffect, useState } from "react";
+import { useWorkspace } from "@/hooks/use-workspace";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,26 +30,10 @@ import {
   X,
   RefreshCw,
 } from "lucide-react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { repositoriesApi } from "@/lib/api/repositories";
-import type { Repository } from "@/lib/api/repositories";
-import { apiFetch } from "@/lib/api";
-import { toast } from "sonner"
+import { toast } from "sonner";
 import { DisconnectProjectDialog } from "@/components/dashboard/project/disconnect-project-dialog";
-
-interface RepositorySettings {
-  auto_scan_enabled: boolean;
-  scan_on_push: boolean;
-  scan_on_pr: boolean;
-  branch_filter: string[];
-  excluded_branches: string[];
-  default_scan_type: "quick" | "full"; // ✅ FIX: Removed 'custom'
-  auto_create_issues: boolean;
-  issue_severity_threshold: "critical" | "high" | "medium" | "low";
-  issue_labels: string[];
-  issue_assignees: string[];
-}
+import { repositoriesApi } from "@/lib/api/repositories";
+import type { Repository, RepositorySettings } from "@/lib/api/repositories";
 
 export default function ProjectSettingsPage({
   params,
@@ -56,18 +41,14 @@ export default function ProjectSettingsPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = use(params);
-  const router = useRouter();
+  const { workspace } = useWorkspace();
 
-  
   const [project, setProject] = useState<Repository | null>(null);
   const [loading, setLoading] = useState(true);
-  // const [saving, setSaving] = useState(false);
   const [savingBasicSettings, setSavingBasicSettings] = useState(false);
   const [savingScanSettings, setSavingScanSettings] = useState(false);
   const [savingIssueSettings, setSavingIssueSettings] = useState(false);
-
   const [error, setError] = useState<string | null>(null);
-
 
   // Basic form state
   const [displayName, setDisplayName] = useState("");
@@ -88,57 +69,62 @@ export default function ProjectSettingsPage({
     issue_assignees: [],
   });
 
-  // Track original settings to detect changes
   const [originalSettings, setOriginalSettings] = useState<RepositorySettings>(settings);
-
   const [webhookStatus, setWebhookStatus] = useState<"active" | "inactive" | "failed" | null>(null);
   const [registeringWebhook, setRegisteringWebhook] = useState(false);
   const [newBranch, setNewBranch] = useState("");
   const [newLabel, setNewLabel] = useState("");
 
   useEffect(() => {
-    loadProject();
-  }, [projectId]);
+    if (workspace?.id) {
+      loadProject();
+    }
+  }, [projectId, workspace?.id]);
 
   const loadProject = async () => {
+    if (!workspace?.id) {
+      setError("Workspace not loaded");
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
 
       // Load project data
-      const projectData = await repositoriesApi.getById(projectId);
+      const projectData = await repositoriesApi.getById(workspace.id, projectId);
       setProject(projectData);
       setDisplayName(projectData.name);
       setDefaultBranch(projectData.default_branch);
       setStatus(projectData.status);
 
-      // Load settings
-      const settingsResponse = await apiFetch(`/repositories/${projectId}/settings`, {
-        requireAuth: true,
-      });
+      // Load settings and webhook status
+      const settingsResponse = await repositoriesApi.getSettings(workspace.id, projectId);
 
-      if (settingsResponse.settings) {
+      if (settingsResponse?.settings) {
         setSettings(settingsResponse.settings);
         setOriginalSettings(settingsResponse.settings);
       }
 
-      setWebhookStatus(settingsResponse.webhook_status);
+      if (settingsResponse?.webhook_status) {
+        setWebhookStatus(settingsResponse.webhook_status);
+      }
     } catch (err: any) {
       console.error('Error loading project:', err);
       setError(err.message || "Failed to load project");
       toast.error(
         <div>
           <strong>Failed to load project settings</strong>
-           <p>{err.message}</p>
+          <p>{err.message}</p>
         </div>
-    );
+      );
     } finally {
       setLoading(false);
     }
   };
 
   const handleSaveBasic = async () => {
-    if (!project) return;
+    if (!project || !workspace?.id) return;
 
     try {
       setSavingBasicSettings(true);
@@ -155,14 +141,14 @@ export default function ProjectSettingsPage({
             <strong>No Changes</strong>
             <p>No changes to save</p>
           </div>
-);
+        );
         return;
       }
 
-      const updated = await repositoriesApi.update(projectId, updates);
+      const updated = await repositoriesApi.update(workspace.id, projectId, updates);
       setProject(updated);
       
-      toast.success( "Basic settings saved successfully");
+      toast.success("Basic settings saved successfully");
     } catch (err: any) {
       console.error('Error saving basic settings:', err);
       setError(err.message || "Failed to save changes");
@@ -171,15 +157,15 @@ export default function ProjectSettingsPage({
           <strong>Failed to save changes</strong>
           <p>{err.message}</p>
         </div>
-        );
+      );
     } finally {
       setSavingBasicSettings(false);
     }
   };
 
-
-
   const handleSaveScanSettings = async () => {
+    if (!workspace?.id) return;
+
     try {
       setSavingScanSettings(true);
       setError(null);
@@ -193,20 +179,15 @@ export default function ProjectSettingsPage({
         default_scan_type: settings.default_scan_type,
       };
 
-      await apiFetch(`/repositories/${projectId}/settings`, {
-        method: "PATCH",
-        requireAuth: true,
-        body: JSON.stringify(scanSettingsOnly),
-      });
+      await repositoriesApi.updateSettings(workspace.id, projectId, scanSettingsOnly);
 
       setOriginalSettings(settings);
 
+      // Refresh webhook status if auto-scan is enabled
       if (settings.auto_scan_enabled && webhookStatus !== "active") {
         setTimeout(async () => {
           try {
-            const settingsResponse = await apiFetch(`/repositories/${projectId}/settings`, {
-              requireAuth: true,
-            });
+            const settingsResponse = await repositoriesApi.getSettings(workspace.id, projectId);
             setWebhookStatus(settingsResponse.webhook_status);
           } catch (err) {
             console.error('Error refreshing webhook status:', err);
@@ -230,6 +211,8 @@ export default function ProjectSettingsPage({
   };
 
   const handleSaveIssueSettings = async () => {
+    if (!workspace?.id) return;
+
     try {
       setSavingIssueSettings(true);
       setError(null);
@@ -241,11 +224,7 @@ export default function ProjectSettingsPage({
         issue_assignees: settings.issue_assignees,
       };
 
-      await apiFetch(`/repositories/${projectId}/settings`, {
-        method: "PATCH",
-        requireAuth: true,
-        body: JSON.stringify(issueSettingsOnly),
-      });
+      await repositoriesApi.updateSettings(workspace.id, projectId, issueSettingsOnly);
 
       setOriginalSettings(settings);
 
@@ -265,14 +244,13 @@ export default function ProjectSettingsPage({
   };
 
   const handleRegisterWebhook = async () => {
+    if (!workspace?.id) return;
+
     try {
       setRegisteringWebhook(true);
       setError(null);
 
-      const response = await apiFetch(`/repositories/${projectId}/webhook/register`, {
-        method: "POST",
-        requireAuth: true,
-      });
+      const response = await repositoriesApi.registerWebhook(workspace.id, projectId);
 
       if (response.success) {
         setWebhookStatus("active");
@@ -349,8 +327,6 @@ export default function ProjectSettingsPage({
       defaultBranch !== project.default_branch ||
       status !== project.status);
 
-  const hasSettingsChanges = JSON.stringify(settings) !== JSON.stringify(originalSettings);
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -359,12 +335,19 @@ export default function ProjectSettingsPage({
     );
   }
 
-
+  if (!workspace?.id) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>Workspace not loaded</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-4xl px-4 sm:px-6">
-
-
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Project Settings</h1>
@@ -787,6 +770,7 @@ export default function ProjectSettingsPage({
             </div>
             <DisconnectProjectDialog 
               project={project ? { id: projectId, name: project.name } : null}
+              workspaceId={workspace.id}
               redirectTo="/dashboard/projects"
               trigger={
                 <Button variant="destructive" className="ml-4 flex-shrink-0">

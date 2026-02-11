@@ -29,7 +29,7 @@ export class GitleaksScanner extends BaseScanner {
   readonly name = "gitleaks";
   readonly type = "secrets" as const;
 
-  async scan(workspacePath: string, scanId: string): Promise<ScanResult> {
+  async scan(workspacePath: string, scanId: string, scanType?: 'quick' | 'full'): Promise<ScanResult> {
     const startTime = Date.now();
 
     try {

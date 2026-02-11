@@ -67,37 +67,53 @@ const ROUTE_DEFINITIONS: RouteDefinition[] = [
     },
   },
   {
-    pattern: /^\/dashboard\/projects\/([^/]+)\/scans\/([^/]+)/,
+    pattern: /^\/dashboard\/scans\/([^/]+)/,
     type: 'entity-dependent',
-    redirectOnInvalid: '/dashboard/projects',
+    redirectOnInvalid: '/dashboard/scans', // Redirect to main scans list
     requiresValidation: async (pathname, workspace, queryClient) => {
-      const matches = pathname.match(/\/projects\/([^/]+)\/scans\/([^/]+)/);
-      const projectId = matches?.[1];
-      const scanId = matches?.[2];
-      
-      if (!projectId || !scanId) return false;
+      const scanId = pathname.match(/\/scans\/([^/]+)/)?.[1];
+      if (!scanId) return false;
 
       try {
-        // Check if project belongs to workspace
-        const project = await queryClient.fetchQuery({
-          queryKey: ['workspace', workspace.id, 'project', projectId],
-          queryFn: () => 
-            fetch(`/api/projects/${projectId}?workspace=${workspace.id}`)
-              .then(r => r.json()),
-        });
-        
-        // Check if scan belongs to project
+        // Fetch scan details to verify workspace ownership
         const scan = await queryClient.fetchQuery({
           queryKey: ['workspace', workspace.id, 'scan', scanId],
           queryFn: () => 
             fetch(`/api/scans/${scanId}?workspace=${workspace.id}`)
-              .then(r => r.json()),
+              .then(res => {
+                if (!res.ok) throw new Error('Scan not found');
+                return res.json();
+              }),
         });
         
-        return (
-          project.workspace_id === workspace.id &&
-          scan.repository_id === projectId
-        );
+        // Check if scan belongs to a project in this workspace
+        // Usually scan object has project_id or repository_id, and we trust backend validation
+        // But backend just returns 404 if not found in workspace, so scan fetch failing means invalid.
+        return !!scan;
+      } catch {
+        return false;
+      }
+    },
+  },
+  {
+    pattern: /^\/dashboard\/vulnerabilities\/([^/]+)/,
+    type: 'entity-dependent',
+    redirectOnInvalid: '/dashboard/vulnerabilities',
+    requiresValidation: async (pathname, workspace, queryClient) => {
+      const vulnId = pathname.match(/\/vulnerabilities\/([^/]+)/)?.[1];
+      if (!vulnId) return false;
+
+      try {
+        const vuln = await queryClient.fetchQuery({
+            queryKey: ['workspace', workspace.id, 'vulnerability', vulnId],
+            queryFn: () =>
+                fetch(`/api/vulnerabilities/${vulnId}?workspace=${workspace.id}`)
+                    .then(res => {
+                        if (!res.ok) throw new Error('Vulnerability not found');
+                        return res.json();
+                    }),
+        });
+        return !!vuln;
       } catch {
         return false;
       }

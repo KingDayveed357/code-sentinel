@@ -162,39 +162,46 @@ export const scansApi = {
    * Start a new scan (still repository-scoped)
    * Route: POST /api/scans/:repoId/start
    */
+  /**
+   * Start a new scan (workspace-scoped)
+   * Route: POST /api/workspaces/:workspaceId/scans
+   */
   async start(
+    workspaceId: string,
     repoId: string,
     options: {
       branch?: string;
-      scan_type?: "quick" | "full"; // ✅ FIX: Removed 'custom'
+      scan_type?: "quick" | "full";
     } = {}
   ): Promise<StartScanResponse> {
-    return apiFetch(`/scans/${repoId}/start`, {
+    return apiFetch(`/workspaces/${workspaceId}/scans`, {
       method: "POST",
       requireAuth: true,
       body: JSON.stringify({
+        repositoryId: repoId,
         branch: options.branch || "main",
-        scan_type: options.scan_type || "full",
+        scanType: options.scan_type || "full",
       }),
     });
   },
 
   /**
    * Cancel a running scan
-   * Route: DELETE /api/scans/run/:scanId
+   * Route: POST /api/workspaces/:workspaceId/scans/:scanId/cancel
    */
-  async cancel(scanId: string): Promise<{ success: boolean; message: string }> {
-    return apiFetch(`/scans/run/${scanId}`, {
-      method: "DELETE",
+  async cancel(workspaceId: string, scanId: string): Promise<{ success: boolean; message: string }> {
+    return apiFetch(`/workspaces/${workspaceId}/scans/${scanId}/cancel`, {
+      method: "POST",
       requireAuth: true,
     });
   },
 
   /**
    * Export scan results
-   * Route: GET /api/scans/run/:scanId/export
+   * Route: GET /api/workspaces/:workspaceId/scans/:scanId/export
    */
   async exportResults(
+    workspaceId: string,
     scanId: string,
     format: "json" | "csv" = "json"
   ): Promise<Blob> {
@@ -205,7 +212,7 @@ export const scansApi = {
     }
 
     const response = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/scans/run/${scanId}/export?format=${format}`,
+      `${process.env.NEXT_PUBLIC_API_URL}/workspaces/${workspaceId}/scans/${scanId}/export?format=${format}`,
       {
         method: "GET",
         headers: {
@@ -226,25 +233,43 @@ export const scansApi = {
   },
 
   /**
-   * Get scan status (legacy - for backward compatibility)
-   * Route: GET /api/scans/run/:scanId
-   * @deprecated Use getById() instead
+   * Get scan status
+   * Route: GET /api/workspaces/:workspaceId/scans/:scanId
    */
-  async getStatus(scanId: string): Promise<{
+  async getStatus(workspaceId: string, scanId: string): Promise<{
     scan: Scan;
     summary: ScanSummary;
   }> {
-    return apiFetch(`/scans/run/${scanId}`, {
-      requireAuth: true,
-    });
+     // Reuse getById as it returns scan details which include status
+     const detail = await this.getById(workspaceId, scanId);
+     return {
+        scan: detail,
+        summary: {
+            total_issues: detail.vulnerabilities_found,
+            by_type: detail.scanner_breakdown ? {
+                sast: detail.scanner_breakdown.sast?.findings || 0,
+                sca: detail.scanner_breakdown.sca?.findings || 0,
+                secrets: detail.scanner_breakdown.secrets?.findings || 0,
+                iac: detail.scanner_breakdown.iac?.findings || 0,
+                container: 0
+            } : { sast:0, sca:0, secrets:0, iac:0, container:0 },
+            by_severity: {
+                critical: detail.critical_count,
+                high: detail.high_count,
+                medium: detail.medium_count,
+                low: detail.low_count,
+                info: detail.info_count
+            }
+        }
+     }
   },
 
   /**
-   * Get scan history for a repository (legacy - for backward compatibility)
-   * Route: GET /api/scans/:repoId/history
-   * @deprecated Use getAll() with workspace filter instead
+   * Get scan history for a repository
+   * Route: GET /api/workspaces/:workspaceId/scans?repository_id=:repoId
    */
   async getHistory(
+    workspaceId: string,
     repoId: string,
     params: {
       page?: number;
@@ -259,6 +284,7 @@ export const scansApi = {
     pages: number;
   }> {
     const query = new URLSearchParams({
+      repository_id: repoId,
       page: String(params.page || 1),
       limit: String(params.limit || 20),
     });
@@ -266,17 +292,23 @@ export const scansApi = {
     if (params.status) query.append("status", params.status);
     if (params.severity) query.append("severity", params.severity);
 
-    return apiFetch(`/scans/${repoId}/history?${query}`, {
+    const response: any = await apiFetch(`/workspaces/${workspaceId}/scans?${query.toString()}`, {
       requireAuth: true,
     });
+    
+    return {
+        scans: response.data || [],
+        total: response.meta?.total || 0,
+        page: response.meta?.current_page || 1,
+        pages: response.meta?.total_pages || 1
+    };
   },
 
   /**
-   * Get scan logs (legacy - for backward compatibility)
-   * Route: GET /api/scans/run/:scanId/logs
-   * @deprecated Logs are included in getById() response
+   * Get scan logs
+   * Route: GET /api/workspaces/:workspaceId/scans/:scanId
    */
-  async getLogs(scanId: string): Promise<{
+  async getLogs(workspaceId: string, scanId: string): Promise<{
     logs: Array<{
       id: string;
       created_at: string;
@@ -285,8 +317,16 @@ export const scansApi = {
       details: any;
     }>;
   }> {
-    return apiFetch(`/scans/run/${scanId}/logs`, {
-      requireAuth: true,
-    });
+    const detail = await this.getById(workspaceId, scanId);
+    return {
+        logs: (detail.logs || []).map((l: any, i: number) => ({
+            id: String(i),
+            created_at: l.created_at || l.timestamp,
+            level: l.level as "info" | "warning" | "error",
+            message: l.message,
+            details: null
+        }))
+    };
   },
+
 };

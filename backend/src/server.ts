@@ -11,20 +11,18 @@ import jobQueuePlugin from './utils/queue/job-queue';
 
 // Routes
 import authRoutes from './modules/auth/routes';
-import repositoriesRoutes from './modules/repositories/routes';
-import scansRoutes from './modules/scans/routes';
-import vulnerabilitiesRoutes from './modules/vulnerability/routes';
-import integrationsRoutes from './modules/integrations/routes';
+// import repositoriesRoutes from './modules/repositories/routes';
+
+import { integrationsGlobalRoutes } from './modules/integrations/routes';
 import onboardingRoutes from './modules/onboarding/routes';
 import dashboardRoutes from './modules/dashboard/routes';
 import githubIssuesRoutes from './modules/github-issues/routes';
 import webhooksRoutes from './modules/webhook/route';
 import entitlementsRoutes from './modules/entitlements/routes';
-import teamsRoutes from './modules/teams/routes';
 import workspacesRoutes from './modules/workspaces/routes';
 
 // Workers
-import { processScanJob } from './modules/scans/worker';
+import { processScanJob } from './modules/scans';
 import type { ScanJobPayload } from './utils/queue/job-queue';
 
 export function buildServer() {
@@ -133,15 +131,13 @@ export function buildServer() {
   // Register route modules
   app.register(authRoutes, { prefix: '/api/auth' });
   app.register(onboardingRoutes, { prefix: '/api/onboarding' });
-  app.register(repositoriesRoutes, { prefix: '/api/repositories' });
-  app.register(scansRoutes, { prefix: '/api/scans' });
-  app.register(vulnerabilitiesRoutes, { prefix: '/api/vulnerabilities' });
-  app.register(integrationsRoutes, { prefix: '/api/integrations' });
+  // app.register(repositoriesRoutes, { prefix: '/api/repositories' }); // Moved to workspaces
+  // Integrations Global Routes (workspace-independent)
+  app.register(integrationsGlobalRoutes, { prefix: '/api/integrations' });
   app.register(dashboardRoutes, { prefix: '/api/dashboard' });
   app.register(githubIssuesRoutes, { prefix: '/api/github-issues' });
-  app.register(webhooksRoutes, { prefix: '/api/webhooks' })
-  app.register(entitlementsRoutes, { prefix: '/api/me' });
-  app.register(teamsRoutes, { prefix: '/api/teams' });
+  app.register(webhooksRoutes, { prefix: '/api/webhooks' });
+  // app.register(entitlementsRoutes, { prefix: '/api/me' });
   app.register(workspacesRoutes, { prefix: '/api/workspaces' });
 
 

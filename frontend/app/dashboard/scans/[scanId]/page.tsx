@@ -300,7 +300,11 @@ export default function ScanDetailPage() {
                       <Separator orientation="vertical" className="h-4" />
                       <div className="flex items-center gap-1.5 text-muted-foreground">
                         <Clock className="h-3.5 w-3.5" />
-                        <span className="text-xs">{scan.duration_seconds}s</span>
+                        <span className="text-xs">
+                          {scan.duration_seconds >= 60
+                            ? `${Math.floor(scan.duration_seconds / 60)}m ${scan.duration_seconds % 60}s`
+                            : `${scan.duration_seconds}s`}
+                        </span>
                       </div>
                     </>
                   )}
@@ -508,7 +512,7 @@ export default function ScanDetailPage() {
           <CardTitle className="text-lg">Scan Logs</CardTitle>
         </CardHeader>
         <CardContent>
-          <ScanLogsWithProgress scanId={scan.id} isRunning={isRunning} />
+          {workspaceId && <ScanLogsWithProgress scanId={scan.id} workspaceId={workspaceId} isRunning={isRunning} />}
         </CardContent>
       </Card>
 

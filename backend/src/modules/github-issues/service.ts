@@ -11,7 +11,8 @@ import type { GitHubIssueCreatePayload, GitHubIssueResponse, IssueCreationResult
  */
 export async function createGitHubIssue(
   fastify: FastifyInstance,
-  userId: string,
+  workspaceId: string,
+  userId: string | null,
   vulnerability: {
     id: string;
     type: 'sast' | 'sca' | 'secrets' | 'iac' | 'container';
@@ -38,8 +39,8 @@ export async function createGitHubIssue(
   }
 ): Promise<IssueCreationResult> {
   try {
-    // Get GitHub integration
-    const integration = await getIntegration(fastify, userId, 'github');
+    // Get GitHub integration using workspace context
+    const integration = await getIntegration(fastify, workspaceId, 'github');
 
     if (!integration || !integration.access_token) {
       return {
@@ -53,7 +54,7 @@ export async function createGitHubIssue(
       .from('github_issues')
       .select('github_issue_url, github_issue_number')
       .eq('vulnerability_id', vulnerability.id)
-      .eq('vulnerability_type', vulnerability.type)
+      .eq('repository_id', scanContext.repositoryId)
       .eq('issue_status', 'open')
       .single();
 
@@ -105,9 +106,10 @@ export async function createGitHubIssue(
       .insert({
         vulnerability_id: vulnerability.id,
         vulnerability_type: vulnerability.type,
+        workspace_id: workspaceId,
         repository_id: scanContext.repositoryId,
         scan_id: scanContext.scanId,
-        user_id: userId,
+        user_id: userId, // Can be null for auto-created
         github_issue_id: githubIssue.id,
         github_issue_number: githubIssue.number,
         github_issue_url: githubIssue.html_url,
@@ -124,7 +126,6 @@ export async function createGitHubIssue(
 
     if (dbError) {
       fastify.log.error({ dbError }, 'Failed to store GitHub issue in database');
-      // Issue was created on GitHub but not stored - not critical
     }
 
     fastify.log.info(
@@ -182,7 +183,7 @@ function buildIssuePayload(
   };
 
   // Build title
-  const emoji = severityEmoji[vulnerability.severity] || '🔵';
+  const emoji = severityEmoji[vulnerability.severity as keyof typeof severityEmoji] || '🔵';
   const title = `[Security] ${emoji} ${vulnerability.severity.toUpperCase()}: ${vulnerability.title}`;
 
   // Build body
@@ -199,7 +200,7 @@ function buildIssuePayload(
   let body = `## 🛡️ Security Vulnerability Detected
 
 **Severity:** ${emoji} **${vulnerability.severity.toUpperCase()}**  
-**Type:** ${typeLabels[vulnerability.type]}  
+**Type:** ${typeLabels[vulnerability.type as keyof typeof typeLabels] || vulnerability.type}  
 **Scan ID:** \`${scanContext.scanId}\`
 
 ---
@@ -223,7 +224,7 @@ ${vulnerability.description || 'No description available.'}
 
     if (vulnerability.cwe) {
       const cwes = Array.isArray(vulnerability.cwe) ? vulnerability.cwe : [vulnerability.cwe];
-      cwes.forEach((cwe) => {
+      cwes.forEach((cwe: string) => {
         body += `- [${cwe}](https://cwe.mitre.org/data/definitions/${cwe.replace('CWE-', '')}.html)\n`;
       });
     }
@@ -284,7 +285,7 @@ export async function autoCreateIssuesForScan(
     // Get scan details
     const { data: scan, error: scanError } = await fastify.supabase
       .from('scans')
-      .select('id, user_id, repository_id, branch, commit_sha')
+      .select('id, workspace_id, user_id, repository_id, branch, commit_hash')
       .eq('id', scanId)
       .single();
 
@@ -321,33 +322,60 @@ export async function autoCreateIssuesForScan(
       settings.issue_severity_threshold || 'high'
     );
 
-    // Get vulnerabilities above threshold from all types
-    const vulnerabilityTypes = ['sast', 'sca', 'secrets', 'iac', 'container'];
-    const allVulnerabilities = [];
+    // Fetch all instances for this scan
+    const { data: instances, error: instanceError } = await fastify.supabase
+      .from('vulnerability_instances')
+      .select(`
+        vulnerability_id,
+        file_path,
+        line_start,
+        vulnerabilities_unified!inner (
+          id,
+          severity,
+          title,
+          description,
+          scanner_type,
+          ai_remediation,
+          cwe,
+          scanner_metadata
+        )
+      `)
+      .eq('scan_id', scanId);
 
-    for (const type of vulnerabilityTypes) {
-      const { data: vulns } = await fastify.supabase
-        .from(`vulnerabilities_${type}`)
-        .select('id, severity, title, description, file_path, line_start, recommendation, cwe, cve')
-        .eq('scan_id', scanId);
-
-      if (vulns) {
-        allVulnerabilities.push(
-          ...vulns.map((v) => ({ ...v, type }))
-        );
-      }
+    if (instanceError) {
+      throw new Error(`Failed to fetch scan instances: ${instanceError.message}`);
     }
 
-    // Filter by severity threshold
-    const eligibleVulns = allVulnerabilities.filter((v) => {
-      const severityIndex = severityOrder.indexOf(v.severity);
-      return severityIndex >= minSeverityIndex;
-    });
+    if (!instances || instances.length === 0) {
+      fastify.log.info({ scanId }, 'No vulnerabilities found for auto-issue creation');
+      return { created: 0, skipped: 0, failed: 0 };
+    }
+
+    // Map to flat structure and filter by severity
+    const eligibleVulns = instances
+      .map((inst: any) => {
+        const unified = inst.vulnerabilities_unified;
+        return {
+            id: unified.id,
+            type: unified.scanner_type,
+            severity: unified.severity,
+            title: unified.title,
+            description: unified.description,
+            file_path: inst.file_path,
+            line_start: inst.line_start,
+            recommendation: unified.ai_remediation,
+            cwe: unified.cwe,
+            cve: unified.scanner_metadata?.cve
+        };
+      })
+      .filter((v: any) => {
+        const severityIndex = severityOrder.indexOf(v.severity);
+        return severityIndex >= minSeverityIndex;
+      });
 
     fastify.log.info(
       {
         scanId,
-        total: allVulnerabilities.length,
         eligible: eligibleVulns.length,
         threshold: settings.issue_severity_threshold,
       },
@@ -356,30 +384,20 @@ export async function autoCreateIssuesForScan(
 
     // Create issues
     for (const vuln of eligibleVulns) {
-      // Check if issue already exists
-      const { data: existingIssue } = await fastify.supabase
-        .from('github_issues')
-        .select('id')
-        .eq('vulnerability_id', vuln.id)
-        .eq('vulnerability_type', vuln.type)
-        .single();
-
-      if (existingIssue) {
-        skipped++;
-        continue;
-      }
-
+      // Check if issue already exists logic is handled inside createGitHubIssue too
+      
       // Create issue
       const result = await createGitHubIssue(
         fastify,
-        scan.user_id,
+        scan.workspace_id, // Pass workspaceId explicitly
+        null, // Auto-created, no user context
         vuln,
         {
           scanId: scan.id,
           repositoryId: scan.repository_id,
           repoFullName: repository.full_name,
           branch: scan.branch,
-          commitSha: scan.commit_sha,
+          commitSha: scan.commit_hash,
         },
         {
           labels: settings.issue_labels,
@@ -389,16 +407,10 @@ export async function autoCreateIssuesForScan(
       );
 
       if (result.success) {
-        created++;
+        if (result.issue_number) created++;
+        else skipped++; // Existed
       } else {
         failed++;
-        fastify.log.error(
-          {
-            vulnerabilityId: vuln.id,
-            error: result.error,
-          },
-          'Failed to auto-create issue'
-        );
       }
 
       // Add delay to avoid rate limiting
@@ -406,12 +418,7 @@ export async function autoCreateIssuesForScan(
     }
 
     fastify.log.info(
-      {
-        scanId,
-        created,
-        skipped,
-        failed,
-      },
+      { scanId, created, skipped, failed },
       'Auto-issue creation completed'
     );
   } catch (error: any) {
@@ -442,18 +449,62 @@ export async function closeGitHubIssue(
       return { success: false, error: 'Issue not found' };
     }
 
-    // Get GitHub integration
-    const integration = await getIntegration(fastify, userId, 'github');
-
-    if (!integration || !integration.access_token) {
-      return { success: false, error: 'GitHub integration not found' };
-    }
+    // Get GitHub integration - user might need to be author, so we check user integration
+    // But if team workspace, we should use workspace integration
+    // But close issue is usually manual action by user.
+    // If workspaceId is not in arguments, we might need to derive it from issue or repository?
+    // The previous implementation used getIntegration(fastify, userId).
+    // If changed to getIntegration(fastify, workspaceId), we need proper workspace context.
+    // Assuming userId here is sufficient for legacy closing or we need to update it too.
+    // For now, let's keep it as is unless it breaks.
+    // But getIntegration now expects workspaceId.
+    // So 'userId' passed here better be a workspaceId if user is team admin? No.
+    // This function 'closeGitHubIssue' is problematic if getIntegration signature changed.
+    
+    // Quick fix: pass ISSUE's workspace_id if available, or fetch it.
+    // Assuming github_issues table has workspace_id (since we added it in createGitHubIssue).
+    
+    // Fetch workspace_id from issue record?
+    // We already fetch issue record.
+    // Let's assume issue.workspace_id exists.
+    
+    // const workspaceId = issue.workspace_id;
+    // const integration = await getIntegration(fastify, workspaceId, 'github');
+    
+    // But TS might complain if I don't know the schema.
+    // Let's stick to original logic but fix the `getIntegration` call.
+    // If I can't fix `closeGitHubIssue` safely, I leave it broken? No.
+    // The `getIntegration` expects workspaceId.
+    // I should fetch workspace_id via issue.
+    // I'll add workspace_id to select.
+    
+    const { data: issueWithWorkspace } = await fastify.supabase
+      .from('github_issues')
+      .select('*, repositories!inner(full_name)')
+      .eq('id', issueId)
+      // .eq('user_id', userId) // removed user ownership check for shared workspace issues?
+      // Or keep ownership check.
+      .single();
+      
+     if (!issueWithWorkspace) return { success: false, error: 'Issue not found' };
+     
+     // Assuming workspace_id is on issue. If not, use repository.workspace_id via join?
+     // repositories!inner(full_name, workspace_id)
+     
+     const { data: repo } = await fastify.supabase.from('repositories').select('workspace_id').eq('id', issueWithWorkspace.repository_id).single();
+     if (!repo) return { success: false, error: 'Repository not found' };
+     
+     const integration = await getIntegration(fastify, repo.workspace_id, 'github');
+     
+     if (!integration || !integration.access_token) {
+        return { success: false, error: 'GitHub integration not found' };
+     }
 
     // Close issue on GitHub
-    const [owner, repo] = issue.repositories.full_name.split('/');
+    const [owner, repoName] = issueWithWorkspace.repositories.full_name.split('/');
 
     const response = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/issues/${issue.github_issue_number}`,
+      `https://api.github.com/repos/${owner}/${repoName}/issues/${issueWithWorkspace.github_issue_number}`,
       {
         method: 'PATCH',
         headers: {

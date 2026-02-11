@@ -254,6 +254,10 @@ export const vulnerabilitiesApi = {
    * Route: GET /api/workspaces/:workspaceId/vulnerabilities?scan_id=:scanId
    * Note: This uses the same endpoint with a filter
    */
+  /**
+   * Get vulnerabilities by scan
+   * Route: GET /api/workspaces/:workspaceId/vulnerabilities?scan_id=:scanId
+   */
   async getByScan(
     workspaceId: string,
     scanId: string,
@@ -264,20 +268,15 @@ export const vulnerabilitiesApi = {
       status?: string;
     } = {}
   ): Promise<{
-    data: Vulnerability[];
-    meta: {
-      current_page: number;
-      per_page: number;
-      total: number;
-      total_pages: number;
-      has_next: boolean;
-      has_prev: boolean;
-    };
+    vulnerabilities: Vulnerability[];
+    total: number;
+    page: number;
+    pages: number;
   }> {
     const query = new URLSearchParams({
+      scan_id: scanId,
       page: String(params.page || 1),
       limit: String(params.limit || 15),
-      scan_id: scanId, // Filter by scan
     });
 
     if (params.severity && params.severity.length > 0) {
@@ -285,9 +284,17 @@ export const vulnerabilitiesApi = {
     }
     if (params.status) query.append("status", params.status);
 
-    return apiFetch(`/workspaces/${workspaceId}/vulnerabilities?${query}`, {
+    const response: any = await apiFetch(`/workspaces/${workspaceId}/vulnerabilities?${query}`, {
       requireAuth: true,
     });
+    
+    // Adapt response to expected interface
+    return {
+        vulnerabilities: response.data || [],
+        total: response.meta?.total || 0,
+        page: response.meta?.current_page || 1,
+        pages: response.meta?.total_pages || 1
+    };
   },
 
   /**
@@ -295,32 +302,32 @@ export const vulnerabilitiesApi = {
    * Route: GET /api/vulnerabilities/scan/:scanId
    * @deprecated Use getByScan() instead
    */
-  async getVulnerabilitiesByScan(
-    scanId: string,
-    params: {
-      severity?: string;
-      status?: string;
-      search?: string;
-      page?: number;
-      limit?: number;
-    } = {}
-  ): Promise<{
-    vulnerabilities: any[];
-    total: number;
-    page: number;
-    pages: number;
-  }> {
-    const query = new URLSearchParams({
-      page: String(params.page || 1),
-      limit: String(params.limit || 100),
-    });
+  // async getVulnerabilitiesByScan(
+  //   scanId: string,
+  //   params: {
+  //     severity?: string;
+  //     status?: string;
+  //     search?: string;
+  //     page?: number;
+  //     limit?: number;
+  //   } = {}
+  // ): Promise<{
+  //   vulnerabilities: any[];
+  //   total: number;
+  //   page: number;
+  //   pages: number;
+  // }> {
+  //   const query = new URLSearchParams({
+  //     page: String(params.page || 1),
+  //     limit: String(params.limit || 100),
+  //   });
 
-    if (params.severity) query.append("severity", params.severity);
-    if (params.status) query.append("status", params.status);
-    if (params.search) query.append("search", params.search);
+  //   if (params.severity) query.append("severity", params.severity);
+  //   if (params.status) query.append("status", params.status);
+  //   if (params.search) query.append("search", params.search);
 
-    return apiFetch(`/vulnerabilities/scan/${scanId}?${query}`, {
-      requireAuth: true,
-    });
-  },
+  //   return apiFetch(`/vulnerabilities/scan/${scanId}?${query}`, {
+  //     requireAuth: true,
+  //   });
+  // },
 };

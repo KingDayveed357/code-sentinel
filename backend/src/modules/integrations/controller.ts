@@ -18,19 +18,18 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { verifyGitHubToken } from "./helper";
 import {
   getWorkspaceIntegrations,
   getWorkspaceIntegration,
-  upsertOAuthIntegration,
+  connectGitHubOAuth,
   upsertGitHubAppIntegration,
   disconnectIntegration,
   toSafeIntegration,
-  updateOnboardingState,
   type IntegrationProvider,
 } from "./service";
+import { getInstallationMetadata } from "./github-app/auth";
 import { env } from "../../env";
-import { getGithubAppPrivateKey } from "./github-app/private-key";
+
 /**
  * GET /api/integrations
  * Get all integrations for current workspace
@@ -91,35 +90,10 @@ export async function connectGitHubController(
     }
 
     try {
-      // 1. Validate token with GitHub API
-      fastify.log.info({ userId, workspaceId }, 'Validating GitHub OAuth token');
-      const githubUser = await verifyGitHubToken(provider_token);
-      
-      // 2. Create OAuth integration in workspace
-      const integration = await upsertOAuthIntegration(
-        fastify, 
-        workspaceId, 
-        'github',
-        {
-          oauth_user_id: githubUser.id,
-          oauth_access_token: provider_token,
-          account_login: githubUser.login,
-          account_avatar_url: githubUser.avatar_url,
-          account_email: githubUser.email || 'EMAIL_NOT_PUBLIC',
-          metadata: {
-            name: githubUser.name,
-            github_id: githubUser.id,
-          },
-        }
-      );
+      // Use centralized service logic
+      const integration = await connectGitHubOAuth(fastify, workspaceId, userId, provider_token);
 
-      // 3. Update user onboarding state
-      await updateOnboardingState(fastify, userId, {
-        github_connected: true,
-        workspace_created: true,
-      });
-
-      // 4. Return safe integration (no tokens)
+      // Return safe integration (no tokens)
       return reply.send({
         success: true,
         mode: 'oauth',
@@ -130,7 +104,7 @@ export async function connectGitHubController(
     } catch (error: any) {
       fastify.log.error({ error, userId, workspaceId }, 'Failed to connect GitHub OAuth');
       
-      if (error.message?.includes('Invalid or expired')) {
+      if (error.message?.includes('Invalid or expired') || error.statusCode === 401) {
         throw fastify.httpErrors.unauthorized('GitHub token is invalid or expired');
       }
       
@@ -174,83 +148,6 @@ export async function connectGitHubController(
   }
 
   throw fastify.httpErrors.badRequest('Invalid workspace type');
-}
-
-/**
- * GET /api/integrations/github/app/callback
- * 
- * GitHub App installation callback
- * Called by GitHub after user installs the app
- * 
- * Query params:
- * - installation_id: GitHub App installation ID
- * - setup_action: 'install' or 'update'
- * - state: workspace_id
- */
-export async function githubAppCallbackController(
-  fastify: FastifyInstance,
-  request: FastifyRequest<{
-    Querystring: {
-      installation_id: string;
-      setup_action: string;
-      state: string;
-    };
-  }>,
-  reply: FastifyReply
-) {
-  const { installation_id, setup_action, state: workspaceId } = request.query;
-
-  if (!installation_id || !workspaceId) {
-    throw fastify.httpErrors.badRequest('Missing required parameters');
-  }
-
-  fastify.log.info(
-    { installation_id, workspaceId, setup_action },
-    'Processing GitHub App installation'
-  );
-
-  try {
-    // Verify workspace exists and is a team workspace
-    const { data: workspace } = await fastify.supabase
-      .from('workspaces')
-      .select('id, type')
-      .eq('id', workspaceId)
-      .single();
-
-    if (!workspace || workspace.type !== 'team') {
-      throw fastify.httpErrors.badRequest('Invalid workspace or not a team workspace');
-    }
-
-    // Fetch installation details from GitHub (requires GitHub App authentication)
-    const installationDetails = await fetchGitHubAppInstallation(
-      fastify,
-      parseInt(installation_id)
-    );
-
-    // Create GitHub App integration
-    await upsertGitHubAppIntegration(fastify, workspaceId, {
-      installation_id: installationDetails.id,
-      account_id: installationDetails.account.id,
-      account_login: installationDetails.account.login,
-      account_type: installationDetails.account.type as 'User' | 'Organization',
-      account_avatar_url: installationDetails.account.avatar_url,
-      metadata: {
-        app_slug: installationDetails.app_slug,
-        target_type: installationDetails.target_type,
-        repository_selection: installationDetails.repository_selection,
-        created_at: installationDetails.created_at,
-      },
-    });
-
-    // Redirect to integrations page with success
-    const redirectUrl = `${process.env.NEXT_PUBLIC_FRONTEND_URL}/dashboard/integrations/github?success=true&workspace_id=${workspaceId}`;
-    return reply.redirect(redirectUrl);
-  } catch (error: any) {
-    fastify.log.error({ error, installation_id, workspaceId }, 'GitHub App callback failed');
-    
-    const errorUrl = `${process.env.NEXT_PUBLIC_FRONTEND_URL}/dashboard/integrations/github?error=installation_failed&workspace_id=${workspaceId}`;
-    return reply.redirect(errorUrl);
-  }
 }
 
 /**
@@ -299,74 +196,4 @@ export async function disconnectIntegrationController(
     message: `${provider} disconnected successfully`,
     requiresSignOut,
   });
-}
-
-/**
- * Helper: Fetch GitHub App installation details
- * 
- * Requires GitHub App JWT authentication
- */
-async function fetchGitHubAppInstallation(
-  fastify: FastifyInstance,
-  installationId: number
-): Promise<{
-  id: number;
-  account: {
-    id: number;
-    login: string;
-    type: string;
-    avatar_url: string;
-  };
-  app_slug: string;
-  target_type: string;
-  repository_selection: string;
-  created_at: string;
-}> {
-  const appId = env.GITHUB_APP_ID;
-  const privateKey = getGithubAppPrivateKey();
-
-  if (!appId || !privateKey) {
-    throw new Error('GitHub App credentials not configured');
-  }
-
-  // Generate GitHub App JWT
-  const { createAppAuth } = await import('@octokit/auth-app');
-  const auth = createAppAuth({
-    appId,
-    privateKey: privateKey.replace(/\\n/g, '\n'),
-  });
-
-  const { token: appToken } = await auth({ type: 'app' });
-
-  // Fetch installation details
-  const response = await fetch(
-    `https://api.github.com/app/installations/${installationId}`,
-    {
-      headers: {
-        Authorization: `Bearer ${appToken}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'CodeSentinel/1.0',
-      },
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`GitHub API error: ${response.status}`);
-  }
-
-  const data = await response.json();
-
-  return {
-    id: data.id,
-    account: {
-      id: data.account.id,
-      login: data.account.login,
-      type: data.account.type,
-      avatar_url: data.account.avatar_url,
-    },
-    app_slug: data.app_slug,
-    target_type: data.target_type,
-    repository_selection: data.repository_selection,
-    created_at: data.created_at,
-  };
 }

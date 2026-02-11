@@ -15,7 +15,9 @@ import { supabase, getCurrentSession } from "@/lib/supabase-client";
 import { authApi } from "@/lib/api/auth";
 import type { User, Session } from "@supabase/supabase-js";
 import type { Workspace } from "@/lib/api/workspaces";
-import { workspacesApi } from "@/lib/api/workspaces";
+import { bootstrapWorkspace, listWorkspaces } from "@/lib/api/workspaces";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+
 
 type AuthUser = User & {
   plan?: string;
@@ -53,6 +55,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isNavigatingRef = useRef(false);
   const profileFetchTimerRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
+  
+  // Use centralized workspace store
+  const { setWorkspace: setWorkspaceInStore, setWorkspaces, setInitializing } = useWorkspaceStore();
 
   // Fetch profile from backend
   const fetchUserProfile = useCallback(async (accessToken?: string) => {
@@ -135,9 +140,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfileLoading(true);
 
         // Step 1: Fetch user profile
+        console.log('🔐 Fetching user profile...');
         const profile = await fetchUserProfile(session.access_token);
         if (!mountedRef.current) return;
-        if (profile) setUser(profile);
+        if (profile) {
+          console.log('✅ User profile loaded:', profile.email);
+          setUser(profile);
+        } else {
+          console.error('❌ Failed to load user profile');
+        }
 
         // Step 2: Bootstrap workspace
         // ✅ CRITICAL: Backend middleware now handles:
@@ -145,11 +156,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         //   - Creating GitHub integration if user has OAuth token
         //   - Race condition prevention
         // Frontend just calls one endpoint and everything is ready!
-        const { workspace: activeWorkspace } = await workspacesApi.bootstrap();
-        if (!mountedRef.current) return;
-        if (activeWorkspace) {
-          setWorkspace(activeWorkspace);
-          localStorage.setItem('active_workspace_id', activeWorkspace.id);
+        console.log('🏢 Bootstrapping workspace...');
+        try {
+          const { workspace: activeWorkspace } = await bootstrapWorkspace();
+          if (!mountedRef.current) return;
+          if (activeWorkspace) {
+            console.log('✅ Workspace bootstrapped:', activeWorkspace.name, activeWorkspace.id);
+            setWorkspace(activeWorkspace); // Local state for auth context
+            setWorkspaceInStore(activeWorkspace); // Store in centralized store
+            localStorage.setItem('active_workspace_id', activeWorkspace.id);
+            
+            // Fetch all workspaces for switcher
+            console.log('📋 Fetching all workspaces...');
+            const allWorkspaces = await listWorkspaces();
+            setWorkspaces(allWorkspaces);
+            console.log('✅ Loaded', allWorkspaces.length, 'workspaces');
+          } else {
+            console.error('❌ Bootstrap returned no workspace');
+          }
+        } catch (bootstrapError) {
+          console.error('❌ Workspace bootstrap failed:', bootstrapError);
+          // Don't throw - allow user to continue without workspace
+          // They can create one manually if needed
+        } finally {
+          setInitializing(false);
         }
 
         // Step 3: Clean up OAuth token from URL (if present)
@@ -160,7 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
       } catch (err) {
-        console.error('Auth init error:', err);
+        console.error('❌ Auth init error:', err);
         if (mountedRef.current) {
           setUser(null);
           setWorkspace(null);

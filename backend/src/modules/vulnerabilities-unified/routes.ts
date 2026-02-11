@@ -2,6 +2,13 @@
 // API routes for unified vulnerabilities
 
 import type { FastifyInstance } from "fastify";
+import { verifyAuth, loadProfile } from "../../middleware/auth";
+import { resolveWorkspace } from "../../middleware/workspace";
+import {
+  requireAuth,
+  requireProfile,
+  requireWorkspace,
+} from "../../middleware/gatekeepers";
 import {
   getVulnerabilitiesByWorkspace,
   getVulnerabilityDetails,
@@ -9,13 +16,31 @@ import {
   assignVulnerability,
   generateAIExplanation,
   getVulnerabilityStats,
+  createGitHubIssueForUnified,
 } from "./service";
+import {
+  listVulnerabilitiesSchema,
+  getVulnerabilityStatsSchema,
+  getVulnerabilityDetailsSchema,
+  updateVulnerabilityStatusSchema,
+  assignVulnerabilitySchema,
+  generateAIExplanationSchema,
+  createGitHubIssueSchema
+} from "./schemas";
 
 export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
+  // Apply workspace security middleware stack
+  fastify.addHook("preHandler", verifyAuth);
+  fastify.addHook("preHandler", loadProfile);
+  fastify.addHook("preHandler", requireAuth);
+  fastify.addHook("preHandler", requireProfile);
+  fastify.addHook("preHandler", resolveWorkspace);
+  fastify.addHook("preHandler", requireWorkspace);
+
   // GET /api/workspaces/:workspaceId/vulnerabilities
-  // Get all vulnerabilities for workspace (global view)
   fastify.get(
     "/:workspaceId/vulnerabilities",
+    { schema: listVulnerabilitiesSchema },
     async (request, reply) => {
       const { workspaceId } = request.params as { workspaceId: string };
       const filters = request.query as any;
@@ -31,18 +56,9 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
   );
 
   // GET /api/workspaces/:workspaceId/vulnerabilities/stats
-  // Get vulnerability statistics for workspace
   fastify.get(
     "/:workspaceId/vulnerabilities/stats",
-    // {
-    //   schema: {
-    //     // params: workspaceIdSchema,
-    //     tags: ["vulnerabilities-unified"],
-    //     summary: "Get vulnerability statistics",
-    //     description:
-    //       "Get aggregated statistics for vulnerabilities in a workspace",
-    //   },
-    // },
+    { schema: getVulnerabilityStatsSchema },
     async (request, reply) => {
       const { workspaceId } = request.params as { workspaceId: string };
 
@@ -53,29 +69,22 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
   );
 
   // GET /api/workspaces/:workspaceId/vulnerabilities/:vulnId
-  // Get single vulnerability details
   fastify.get(
     "/:workspaceId/vulnerabilities/:vulnId",
-    // {
-    //   schema: {
-    //     params: workspaceIdSchema.merge(vulnerabilityIdSchema),
-    //     querystring: vulnerabilityDetailQuerySchema,
-    //     tags: ["vulnerabilities-unified"],
-    //     summary: "Get vulnerability details",
-    //     description:
-    //       "Get detailed information about a specific vulnerability with optional includes (instances, ai_explanation, risk_context, related_issues)",
-    //   },
-    // },
+    { schema: getVulnerabilityDetailsSchema },
     async (request, reply) => {
       const { workspaceId, vulnId } = request.params as {
         workspaceId: string;
         vulnId: string;
       };
       const { include, instances_page, instances_limit } = request.query as { 
-        include?: string[]; 
+        include?: string | string[]; 
         instances_page?: string;
         instances_limit?: string;
       };
+
+      // Normalize include to array
+      const includeArray = Array.isArray(include) ? include : include ? [include] : [];
 
       // Parse pagination parameters with defaults
       const page = instances_page ? parseInt(instances_page, 10) : 1;
@@ -85,7 +94,7 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
         fastify,
         workspaceId,
         vulnId,
-        include || [],
+        includeArray,
         page,
         limit
       );
@@ -95,19 +104,9 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
   );
 
   // PATCH /api/workspaces/:workspaceId/vulnerabilities/:vulnId/status
-  // Update vulnerability status
   fastify.patch(
-    "/workspaces/:workspaceId/vulnerabilities/:vulnId/status",
-    {
-      // schema: {
-      //   params: workspaceIdSchema.merge(vulnerabilityIdSchema),
-      //   body: updateVulnerabilityStatusSchema,
-      //   tags: ["vulnerabilities-unified"],
-      //   summary: "Update vulnerability status",
-      //   description:
-      //     "Update the status of a vulnerability (open, in_review, fixed, false_positive, etc.)",
-      // },
-    },
+    "/:workspaceId/vulnerabilities/:vulnId/status",
+    { schema: updateVulnerabilityStatusSchema },
     async (request, reply) => {
       const { workspaceId, vulnId } = request.params as {
         workspaceId: string;
@@ -128,18 +127,9 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
   );
 
   // PATCH /api/workspaces/:workspaceId/vulnerabilities/:vulnId/assign
-  // Assign vulnerability to user
   fastify.patch(
-    "/workspaces/:workspaceId/vulnerabilities/:vulnId/assign",
-    // {
-    //   schema: {
-    //     params: workspaceIdSchema.merge(vulnerabilityIdSchema),
-    //     body: assignVulnerabilitySchema,
-    //     tags: ["vulnerabilities-unified"],
-    //     summary: "Assign vulnerability",
-    //     description: "Assign a vulnerability to a team member",
-    //   },
-    // },
+    "/:workspaceId/vulnerabilities/:vulnId/assign",
+    { schema: assignVulnerabilitySchema },
     async (request, reply) => {
       const { workspaceId, vulnId } = request.params as {
         workspaceId: string;
@@ -159,19 +149,9 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
   );
 
   // POST /api/workspaces/:workspaceId/vulnerabilities/:vulnId/ai-explain
-  // Generate AI explanation
   fastify.post(
-    "/workspaces/:workspaceId/vulnerabilities/:vulnId/ai-explain",
-    // {
-    //   schema: {
-    //     params: workspaceIdSchema.merge(vulnerabilityIdSchema),
-    //     body: generateAIExplanationSchema,
-    //     tags: ["vulnerabilities-unified"],
-    //     summary: "Generate AI explanation",
-    //     description:
-    //       "Generate or regenerate AI explanation for a vulnerability",
-    //   },
-    // },
+    "/:workspaceId/vulnerabilities/:vulnId/ai-explain",
+    { schema: generateAIExplanationSchema },
     async (request, reply) => {
       const { workspaceId, vulnId } = request.params as {
         workspaceId: string;
@@ -187,6 +167,30 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
       );
 
       return reply.send(updated);
+    }
+  );
+
+  // POST /api/workspaces/:workspaceId/vulnerabilities/:vulnId/create-issue
+  fastify.post(
+    "/:workspaceId/vulnerabilities/:vulnId/create-issue",
+    { schema: createGitHubIssueSchema },
+    async (request, reply) => {
+      const { workspaceId, vulnId } = request.params as {
+        workspaceId: string;
+        vulnId: string;
+      };
+
+      // Get user ID from authenticated request for audit trail
+      const user = request.supabaseUser;
+
+      const result = await createGitHubIssueForUnified(
+        fastify,
+        workspaceId,
+        vulnId,
+        user?.id || null
+      );
+
+      return reply.send(result);
     }
   );
 }

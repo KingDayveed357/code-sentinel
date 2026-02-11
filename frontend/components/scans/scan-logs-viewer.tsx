@@ -68,7 +68,7 @@ export function ScanLogsViewer({ logs, isRunning = false }: ScanLogsViewerProps)
               // Parse timestamp and message
               const timestampMatch = line.match(/^\[([^\]]+)\]/);
               const timestamp = timestampMatch ? timestampMatch[1] : null;
-              const message = timestamp ? line.substring(timestampMatch[0].length).trim() : line;
+              const message = timestampMatch ? line.substring(timestampMatch[0].length).trim() : line;
 
               // Determine log level color
               let messageColor = "text-slate-300";

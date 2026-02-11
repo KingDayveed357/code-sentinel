@@ -40,6 +40,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PremiumPagination } from "@/components/ui/premium-pagination";
 import { Search, Sparkles, ArrowRight } from "lucide-react";
 import { vulnerabilitiesApi } from "@/lib/api/vulnerabilities";
+import { useWorkspace } from "@/hooks/use-workspace";
+import { useVulnerabilities, useVulnerabilityStats } from "@/hooks/use-vulnerabilities";
 
 interface Vulnerability {
   id: string;
@@ -71,63 +73,36 @@ interface VulnerabilityStats {
 }
 
 export default function VulnerabilitiesPage() {
-  const { workspaceId } = useAuth();
+  const { workspace } = useWorkspace(); // Use useWorkspace instead of useAuth for reactivity
+  const workspaceId = workspace?.id;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [vulnerabilities, setVulnerabilities] = useState<Vulnerability[]>([]);
-  const [stats, setStats] = useState<VulnerabilityStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("severity");
   const perPage = 15;
 
-  // Fetch stats
-  useEffect(() => {
-    if (!workspaceId) return;
+  // Fetch stats reactively
+  const { data: stats = null } = useVulnerabilityStats(workspaceId);
 
-    const fetchStats = async () => {
-      try {
-        const data = await vulnerabilitiesApi.getStats(workspaceId);
-        setStats(data);
-      } catch (error) {
-        console.error("Failed to fetch stats:", error);
-      }
-    };
-
-    fetchStats();
-  }, [workspaceId]);
-
-  // Fetch vulnerabilities
-  useEffect(() => {
-    if (!workspaceId) return;
-
-    const fetchVulnerabilities = async () => {
-      setLoading(true);
-      try {
-        const result = await vulnerabilitiesApi.getAll(workspaceId, {
-          page: currentPage,
-          limit: perPage,
-          sort: sortBy as any,
-          search: searchQuery || undefined,
-          status: statusFilter !== "all" ? statusFilter : undefined,
-        });
-
-        setVulnerabilities(result.data || []);
-        setTotalPages(result.meta?.total_pages || 1);
-        setTotal(result.meta?.total || 0);
-      } catch (error) {
-        console.error("Failed to fetch vulnerabilities:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchVulnerabilities();
-  }, [workspaceId, currentPage, searchQuery, statusFilter, sortBy, searchParams]);
+  // Fetch vulnerabilities reactively
+  const { 
+    vulnerabilities, 
+    loading, 
+    total,
+    pages: totalPages 
+  } = useVulnerabilities({
+    workspaceId,
+    filters: {
+      page: currentPage,
+      limit: perPage,
+      sort: sortBy,
+      search: searchQuery || undefined,
+      status: statusFilter !== "all" ? statusFilter : undefined,
+    }
+  });
 
   const getSeverityBadge = (severity: string) => {
     const variants: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; className: string }> = {

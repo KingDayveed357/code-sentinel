@@ -1,274 +1,286 @@
-// src/modules/integrations/service.ts
-/**
- * Integration Service - Workspace-Scoped
- * 
- * CRITICAL ARCHITECTURE:
- * - Personal workspaces: Use OAuth (user signs in with GitHub)
- * - Team workspaces: Use GitHub App (organization installs app)
- * 
- * This separation ensures proper access control and authentication.
- */
 
-import type { FastifyInstance } from 'fastify';
-import { verifyGitHubToken } from './helper';
+import type { FastifyInstance } from "fastify";
+import { IntegrationsRepository } from "./repository";
+import { GitHubService } from "./github/service";
+import type { IntegrationProvider, IntegrationType, WorkspaceIntegration, SafeIntegration } from "./types";
 
-export type IntegrationType = 'oauth' | 'github_app';
-export type IntegrationProvider = 'github' | 'gitlab' | 'bitbucket' | 'slack';
+export class IntegrationsService {
+  constructor(
+    private readonly repository: IntegrationsRepository,
+    private readonly githubService: GitHubService,
+    private readonly fastify: FastifyInstance
+  ) {}
 
-export interface WorkspaceIntegration {
-  id: string;
-  workspace_id: string;
-  provider: IntegrationProvider;
-  type: IntegrationType;
+  async getWorkspaceIntegration(
+    workspaceId: string,
+    provider: IntegrationProvider
+  ): Promise<WorkspaceIntegration | null> {
+    const integration = await this.repository.findByWorkspaceAndProvider(workspaceId, provider);
+    if (!integration || !integration.connected) return null;
+    return integration;
+  }
+
+  async getWorkspaceIntegrations(workspaceId: string): Promise<WorkspaceIntegration[]> {
+    return this.repository.findAllByWorkspace(workspaceId);
+  }
+
+  async getIntegrationToken(
+    workspaceId: string,
+    provider: IntegrationProvider
+  ): Promise<string | null> {
+    if (provider === "github") {
+      try {
+        return await this.githubService.getToken(workspaceId);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /* GitHub Specific Flows */
   
-  // OAuth fields
-  oauth_user_id: number | null;
-  oauth_access_token: string | null;
-  oauth_refresh_token: string | null;
-  oauth_expires_at: string | null;
-  
-  // GitHub App fields
-  github_app_installation_id: number | null;
-  github_app_account_id: number | null;
-  github_app_account_login: string | null;
-  github_app_account_type: 'User' | 'Organization' | null;
-  
-  // Common fields
-  account_login: string;
-  account_avatar_url: string | null;
-  account_email: string | null;
-  connected: boolean;
-  metadata: Record<string, any>;
-  
-  connected_at: string | null;
-  created_at: string;
-  updated_at: string;
+  async connectGitHubOAuth(
+    workspaceId: string,
+    userId: string,
+    token: string
+  ): Promise<WorkspaceIntegration> {
+    // 1. Verify token
+    const githubUser = await this.githubService.verifyToken(token);
+
+    // 2. Upsert integration
+    const integration = await this.repository.upsert({
+      workspace_id: workspaceId,
+      provider: "github",
+      type: "oauth",
+      oauth_user_id: githubUser.id,
+      oauth_access_token: token,
+      oauth_refresh_token: null, 
+      oauth_expires_at: null,
+      account_login: githubUser.login,
+      account_avatar_url: githubUser.avatar_url,
+      account_email: githubUser.email || "EMAIL_NOT_PUBLIC",
+      connected: true,
+      metadata: {
+        name: githubUser.name,
+        github_id: githubUser.id,
+      },
+      connected_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    // 3. Update onboarding
+    await this.updateOnboardingState(userId, {
+      github_connected: true,
+      workspace_created: true,
+    });
+
+    return integration;
+  }
+
+  async upsertGitHubAppIntegration(
+    workspaceId: string,
+    data: {
+      installation_id: number;
+      account_id: number;
+      account_login: string;
+      account_type: "User" | "Organization";
+      account_avatar_url?: string;
+      metadata?: Record<string, any>;
+    }
+  ): Promise<WorkspaceIntegration> {
+    return this.repository.upsert({
+      workspace_id: workspaceId,
+      provider: "github",
+      type: "github_app",
+      github_app_installation_id: data.installation_id,
+      github_app_account_id: data.account_id,
+      github_app_account_login: data.account_login,
+      github_app_account_type: data.account_type,
+      account_login: data.account_login,
+      account_avatar_url: data.account_avatar_url || null,
+      connected: true,
+      metadata: data.metadata || {},
+      connected_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  async disconnect(workspaceId: string, provider: IntegrationProvider): Promise<void> {
+    await this.repository.disconnect(workspaceId, provider);
+  }
+
+  toSafeIntegration(integration: WorkspaceIntegration): SafeIntegration {
+    return {
+      id: integration.id,
+      provider: integration.provider,
+      type: integration.type,
+      account_login: integration.account_login,
+      account_avatar_url: integration.account_avatar_url,
+      account_email: integration.account_email,
+      connected: integration.connected,
+      connected_at: integration.connected_at,
+      metadata: integration.metadata,
+    };
+  }
+
+  /* Helpers */
+
+  /**
+   * Ensure GitHub integration exists for personal workspace if user has OAuth token
+   */
+  async ensureGitHubIntegration(userId: string, workspaceId: string, workspaceType: string): Promise<void> {
+    // Only personal workspaces
+    if (workspaceType !== 'personal') return;
+
+    // Check if already connected
+    const existing = await this.repository.findByWorkspaceAndProvider(workspaceId, 'github');
+    if (existing?.connected && existing.type === 'oauth') return;
+
+    // Get token from cache/metadata (via Auth Admin API which helper used)
+    const { data: { user } } = await this.fastify.supabase.auth.admin.getUserById(userId);
+    const githubToken = user?.user_metadata?.github_provider_token as string | undefined;
+
+    if (!githubToken) return;
+
+    try {
+        // Reuse connect logic which verifies token and upserts
+        await this.connectGitHubOAuth(workspaceId, userId, githubToken);
+    } catch (error: any) {
+        this.fastify.log.warn({ userId, workspaceId, error: error.message }, 'Failed to ensure GitHub integration');
+        // If invalid token, clear it to prevent retry loop
+        if (error.message?.includes('valid') || error.statusCode === 401) {
+             await this.fastify.supabase.auth.admin.updateUserById(userId, {
+                user_metadata: {
+                  ...user?.user_metadata,
+                  github_provider_token: null,
+                },
+              });
+        }
+    }
+  }
+
+  async updateOnboardingState(userId: string, updates: Record<string, any>): Promise<void> {
+    const { data: currentUser } = await this.fastify.supabase
+      .from("users")
+      .select("onboarding_state")
+      .eq("id", userId)
+      .single();
+
+    const currentState = currentUser?.onboarding_state || {};
+
+    await this.fastify.supabase
+      .from("users")
+      .update({
+        onboarding_state: {
+          ...currentState,
+          ...updates,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", userId);
+  }
 }
 
-export interface SafeIntegration {
-  id: string;
-  provider: IntegrationProvider;
-  type: IntegrationType;
-  account_login: string;
-  account_avatar_url: string | null;
-  account_email: string | null;
-  connected: boolean;
-  connected_at: string | null;
-  metadata?: Record<string, any>;
+// ------------------------------------------------------------------
+// Legacy Exports for Compatibility
+// ------------------------------------------------------------------
+
+function getService(fastify: FastifyInstance) {
+  const repo = new IntegrationsRepository(fastify);
+  const ghService = new GitHubService(repo, fastify);
+  return new IntegrationsService(repo, ghService, fastify);
 }
 
-/**
- * Get workspace integration by provider
- */
 export async function getWorkspaceIntegration(
   fastify: FastifyInstance,
   workspaceId: string,
   provider: IntegrationProvider
-): Promise<WorkspaceIntegration | null> {
-  const { data, error } = await fastify.supabase
-    .from('workspace_integrations')
-    .select('*')
-    .eq('workspace_id', workspaceId)
-    .eq('provider', provider)
-    .eq('connected', true)
-    .maybeSingle();
-
-  if (error) {
-    fastify.log.error({ error, workspaceId, provider }, 'Failed to get workspace integration');
-    return null;
-  }
-
-  return data as WorkspaceIntegration | null;
+) {
+  return getService(fastify).getWorkspaceIntegration(workspaceId, provider);
 }
 
-/**
- * Get all integrations for workspace
- */
 export async function getWorkspaceIntegrations(
   fastify: FastifyInstance,
   workspaceId: string
-): Promise<WorkspaceIntegration[]> {
-  const { data, error } = await fastify.supabase
-    .from('workspace_integrations')
-    .select('*')
-    .eq('workspace_id', workspaceId)
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    fastify.log.error({ error, workspaceId }, 'Failed to get workspace integrations');
-    return [];
-  }
-
-  return (data as WorkspaceIntegration[]) || [];
+) {
+  return getService(fastify).getWorkspaceIntegrations(workspaceId);
 }
 
-/**
- * Create or update OAuth integration (personal workspaces)
- */
-export async function upsertOAuthIntegration(
-  fastify: FastifyInstance,
-  workspaceId: string,
-  provider: IntegrationProvider,
-  data: {
-    oauth_user_id: number;
-    oauth_access_token: string;
-    oauth_refresh_token?: string;
-    oauth_expires_at?: string;
-    account_login: string;
-    account_avatar_url?: string;
-    account_email?: string;
-    metadata?: Record<string, any>;
-  }
-): Promise<WorkspaceIntegration> {
-  const { data: integration, error } = await fastify.supabase
-    .from('workspace_integrations')
-    .upsert(
-      {
-        workspace_id: workspaceId,
-        provider,
-        type: 'oauth',
-        oauth_user_id: data.oauth_user_id,
-        oauth_access_token: data.oauth_access_token,
-        oauth_refresh_token: data.oauth_refresh_token || null,
-        oauth_expires_at: data.oauth_expires_at || null,
-        account_login: data.account_login,
-        account_avatar_url: data.account_avatar_url || null,
-        account_email: data.account_email || null,
-        connected: true,
-        metadata: data.metadata || {},
-        connected_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'workspace_id,provider' }
-    )
-    .select()
-    .single();
-
-  if (error || !integration) {
-    fastify.log.error({ error, workspaceId, provider }, 'Failed to upsert OAuth integration');
-    throw fastify.httpErrors.internalServerError('Failed to save integration');
-  }
-
-  fastify.log.info({ workspaceId, provider, type: 'oauth' }, 'OAuth integration saved');
-  return integration as WorkspaceIntegration;
-}
-
-/**
- * Disconnect integration
- */
-export async function disconnectIntegration(
+export async function getIntegration(
   fastify: FastifyInstance,
   workspaceId: string,
   provider: IntegrationProvider
-): Promise<void> {
-  const { error } = await fastify.supabase
-    .from('workspace_integrations')
-    .update({
-      connected: false,
-      oauth_access_token: null,
-      oauth_refresh_token: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('workspace_id', workspaceId)
-    .eq('provider', provider);
-
-  if (error) {
-    fastify.log.error({ error, workspaceId, provider }, 'Failed to disconnect integration');
-    throw fastify.httpErrors.internalServerError('Failed to disconnect integration');
-  }
-
-  fastify.log.info({ workspaceId, provider }, 'Integration disconnected');
+) {
+  const token = await getService(fastify).getIntegrationToken(workspaceId, provider);
+  return token ? { access_token: token } : null;
 }
 
-/**
- * Transform integration to safe format (strips sensitive tokens)
- */
-export function toSafeIntegration(integration: WorkspaceIntegration): SafeIntegration {
-  return {
-    id: integration.id,
-    provider: integration.provider,
-    type: integration.type,
-    account_login: integration.account_login,
-    account_avatar_url: integration.account_avatar_url,
-    account_email: integration.account_email,
-    connected: integration.connected,
-    connected_at: integration.connected_at,
-    metadata: integration.metadata,
-  };
-}
-
-/**
- * Create or update GitHub App integration (team workspaces)
- */
-export async function upsertGitHubAppIntegration(
-  fastify: FastifyInstance,
-  workspaceId: string,
-  data: {
-    installation_id: number;
-    account_id: number;
-    account_login: string;
-    account_type: 'User' | 'Organization';
-    account_avatar_url?: string;
-    metadata?: Record<string, any>;
-  }
-): Promise<WorkspaceIntegration> {
-  const { data: integration, error } = await fastify.supabase
-    .from('workspace_integrations')
-    .upsert(
-      {
+export async function upsertOAuthIntegration(
+    fastify: FastifyInstance,
+    workspaceId: string,
+    provider: IntegrationProvider,
+    data: any
+) {
+    // This was only used for GitHub by controller, so we map to connectGitHubOAuth if provider is github
+    // But since the signature is different, we might just use the repository direct or service method logic
+    // Actually the logic in old service for `upsertOAuthIntegration` was generic but only used for GitHub really
+    // I will verify usage. 
+    // OLD Signature: (fastify, workspaceId, provider, data: { oauth_user_id... })
+    // Only used in IntegrationsController.connectGitHubController
+    
+    // I will export it but implemented via repo for generic
+    const repo = new IntegrationsRepository(fastify);
+    return repo.upsert({
         workspace_id: workspaceId,
-        provider: 'github',
-        type: 'github_app',
-        github_app_installation_id: data.installation_id,
-        github_app_account_id: data.account_id,
-        github_app_account_login: data.account_login,
-        github_app_account_type: data.account_type,
-        account_login: data.account_login,
-        account_avatar_url: data.account_avatar_url || null,
+        provider,
+        type: 'oauth',
+        ...data,
         connected: true,
-        metadata: data.metadata || {},
         connected_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'workspace_id,provider' }
-    )
-    .select()
-    .single();
-
-  if (error || !integration) {
-    fastify.log.error({ error, workspaceId }, 'Failed to upsert GitHub App integration');
-    throw fastify.httpErrors.internalServerError('Failed to save GitHub App integration');
-  }
-
-  fastify.log.info(
-    { workspaceId, type: 'github_app', installation_id: data.installation_id }, 
-    'GitHub App integration saved'
-  );
-  return integration as WorkspaceIntegration;
+        updated_at: new Date().toISOString()
+    });
 }
-export async function updateOnboardingState(
-  fastify: FastifyInstance,
-  userId: string,
-  updates: Record<string, any>
-): Promise<void> {
-  const { data: currentUser } = await fastify.supabase
-    .from('users')
-    .select('onboarding_state')
-    .eq('id', userId)
-    .single();
 
-  const currentState = currentUser?.onboarding_state || {};
-  
-  await fastify.supabase
-    .from('users')
-    .update({
-      onboarding_state: {
-        ...currentState,
-        ...updates,
-      },
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', userId);
+export async function upsertGitHubAppIntegration(
+    fastify: FastifyInstance,
+    workspaceId: string,
+    data: any
+) {
+    return getService(fastify).upsertGitHubAppIntegration(workspaceId, data);
+}
 
-  fastify.log.info({ userId, updates }, 'Onboarding state updated');
+export async function disconnectIntegration(fastify: FastifyInstance, workspaceId: string, provider: IntegrationProvider) {
+    return getService(fastify).disconnect(workspaceId, provider);
+}
+
+export function toSafeIntegration(integration: WorkspaceIntegration) {
+    // Static helper
+    return {
+      id: integration.id,
+      provider: integration.provider,
+      type: integration.type,
+      account_login: integration.account_login,
+      account_avatar_url: integration.account_avatar_url,
+      account_email: integration.account_email,
+      connected: integration.connected,
+      connected_at: integration.connected_at,
+      metadata: integration.metadata,
+    };
+}
+
+// Re-export types
+export type { IntegrationProvider, IntegrationType, WorkspaceIntegration, SafeIntegration } from './types';
+
+// I'll export a standalone function too
+export async function updateOnboardingState(fastify: FastifyInstance, userId: string, updates: any) {
+    return getService(fastify).updateOnboardingState(userId, updates);
+}
+
+export async function ensureGitHubIntegration(fastify: FastifyInstance, userId: string, workspaceId: string, workspaceType: string) {
+    return getService(fastify).ensureGitHubIntegration(userId, workspaceId, workspaceType);
+}
+
+export async function connectGitHubOAuth(fastify: FastifyInstance, workspaceId: string, userId: string, token: string) {
+    return getService(fastify).connectGitHubOAuth(workspaceId, userId, token);
 }

@@ -167,7 +167,7 @@ export function WorkspaceSwitcher() {
         {/* Create Team Action */}
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link href="/dashboard/teams" className="cursor-pointer">
+          <Link href="/dashboard/workspaces/create" className="cursor-pointer">
             <Plus className="mr-2 h-4 w-4" />
             Create Team Workspace
           </Link>

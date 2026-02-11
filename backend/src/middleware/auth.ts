@@ -73,6 +73,7 @@ export async function loadProfile(
 
         // Attach to request
         request.profile = data as UserProfile;
+        request.user = data as UserProfile; // Convenience alias
         request.log.debug(
             { userId: data.id, plan: data.plan, onboarded: data.onboarding_completed },
             "Profile loaded"

@@ -42,8 +42,8 @@ export const integrationsApi = {
   /**
    * Get all integrations for current workspace
    */
-  getIntegrations: async (): Promise<IntegrationsResponse> => {
-    return apiFetch("/integrations", {
+  getIntegrations: async (workspaceId: string): Promise<IntegrationsResponse> => {
+    return apiFetch(`/workspaces/${workspaceId}/integrations`, {
       requireAuth: true,
     });
   },
@@ -61,7 +61,7 @@ export const integrationsApi = {
    * - Returns GitHub App installation URL
    * - Frontend redirects to GitHub App installation
    */
-  connectGitHub: async (providerToken?: string): Promise<{
+  connectGitHub: async (workspaceId: string, providerToken?: string): Promise<{
     success: boolean;
     mode: 'oauth' | 'github_app';
     status?: 'already_connected' | 'requires_installation';
@@ -72,7 +72,7 @@ export const integrationsApi = {
   }> => {
     const body = providerToken ? { provider_token: providerToken } : {};
     
-    return apiFetch("/integrations/github/connect", {
+    return apiFetch(`/workspaces/${workspaceId}/integrations/github/connect`, {
       method: "POST",
       body: JSON.stringify(body),
       requireAuth: true,
@@ -84,8 +84,8 @@ export const integrationsApi = {
    * 
    * @param provider - Integration provider (github, gitlab, etc.)
    */
-  disconnectIntegration: async (provider: string): Promise<DisconnectResponse> => {
-    return apiFetch(`/integrations/${provider}/disconnect`, {
+  disconnectIntegration: async (workspaceId: string, provider: string): Promise<DisconnectResponse> => {
+    return apiFetch(`/workspaces/${workspaceId}/integrations/${provider}/disconnect`, {
       method: "POST",
       body: JSON.stringify({}),
       requireAuth: true,
@@ -97,7 +97,7 @@ export const integrationsApi = {
    * 
    * @param provider - Integration provider
    */
-  getIntegrationStatus: async (provider: string): Promise<{
+  getIntegrationStatus: async (workspaceId: string, provider: string): Promise<{
     connected: boolean;
     account?: {
       username: string;
@@ -106,7 +106,7 @@ export const integrationsApi = {
       email?: string;
     };
   }> => {
-    const response = await integrationsApi.getIntegrations();
+    const response = await integrationsApi.getIntegrations(workspaceId);
     const integration = response.integrations.find(i => i.provider === provider);
     
     if (!integration || !integration.connected) {

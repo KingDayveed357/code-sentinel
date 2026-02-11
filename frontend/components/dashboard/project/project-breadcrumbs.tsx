@@ -1,151 +1,155 @@
-"use client";
+// components/dashboard/breadcrumbs.tsx
+'use client';
 
-import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
-import Link from "next/link";
-import { repositoriesApi } from "@/lib/api/repositories";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Home, ChevronRight, History } from "lucide-react";
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { ChevronRight, Home, Loader2 } from 'lucide-react';
+import { useProjectBreadcrumbs } from '@/hooks/use-project-breadcrumbs';
+import { useWorkspace } from '@/hooks/use-workspace';
 
-interface ProjectBreadcrumbsProps {
-  projectId: string;
+interface BreadcrumbItem {
+  label: string;
+  href: string;
+  loading?: boolean;
 }
 
-export function ProjectBreadcrumbs({ projectId }: ProjectBreadcrumbsProps) {
+export function Breadcrumbs() {
   const pathname = usePathname();
-  const [projectName, setProjectName] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { workspace } = useWorkspace();
 
-  // 1. Fetch Project Name
-  useEffect(() => {
-    let isMounted = true;
-    async function fetchName() {
-      if (!projectId) return;
-      try {
-        setLoading(true);
-        const project = await repositoriesApi.getById(projectId);
-        if (isMounted) setProjectName(project.name);
-      } catch (e) {
-        console.error("Failed to fetch project name", e);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    }
-    fetchName();
-    return () => { isMounted = false; };
-  }, [projectId]);
+  // Parse project ID from URL
+  const projectIdMatch = pathname.match(/\/projects\/([^\/]+)/);
+  const projectId = projectIdMatch ? projectIdMatch[1] : null;
 
-  // 2. Smart Breadcrumb Logic
-  const generateItems = () => {
-    const items = [];
-    
-    // Root: Dashboard (Icon)
-    items.push({ 
-      label: <Home className="h-4 w-4" />, 
-      href: "/dashboard",
-      isIcon: true 
-    });
+  // Only fetch project data if we're on a project route
+  const project = useProjectBreadcrumbs(projectId);
 
-    // Level 2: Projects
-    items.push({ label: "Projects", href: "/dashboard/projects" });
+  const getBreadcrumbs = (): BreadcrumbItem[] => {
+    const breadcrumbs: BreadcrumbItem[] = [
+      { label: 'Dashboard', href: '/dashboard' },
+    ];
 
-    // Level 3: Project Name (Dynamic)
-    const projectUrl = `/dashboard/projects/${projectId}`;
-    const projectLabel = loading ? (
-      <Skeleton className="h-4 w-24 rounded bg-muted/50" />
-    ) : (
-      <span className="truncate max-w-[150px] inline-block align-bottom">
-        {projectName || "Project"}
-      </span>
-    );
-    
-    items.push({ label: projectLabel, href: projectUrl });
+    const pathSegments = pathname.split('/').filter(Boolean);
 
-    // Level 4+: Nested Routes
-    if (pathname.includes("/settings")) {
-      items.push({ label: "Settings", href: `${projectUrl}/settings` });
-    } 
-    else if (pathname.includes("/scan-history")) {
-      items.push({ label: "Scans", href: `${projectUrl}/scan-history` });
-    }
-    else if (pathname.includes("/scans/")) {
-      items.push({ 
-        label: "Scans", 
-        href: `${projectUrl}/scan-history` 
-      });
+    // Remove 'dashboard' from segments as it's already in breadcrumbs
+    const segments = pathSegments.slice(1);
 
-    
-      const scanIdMatch = pathname.match(/\/scans\/([^/]+)/);
-      const scanId = scanIdMatch ? scanIdMatch[1] : null;
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      const href = `/dashboard/${segments.slice(0, i + 1).join('/')}`;
 
-      if (scanId) {
-        const reportUrl = `/dashboard/scans/${scanId}`;
-        const isVulnerabilityPage = pathname.includes("/vulnerabilities/");
-        items.push({ 
-          label: "Report", 
-          href: reportUrl,
-          active: !isVulnerabilityPage
-        });
-        if (isVulnerabilityPage) {
-           items.push({ 
-             label: "Details", 
-             href: pathname, 
-             active: true 
-           });
+      // Handle special routes
+      if (segment === 'projects') {
+        if (segments[i + 1] && segments[i + 1] !== 'new') {
+          // We're in a specific project
+          breadcrumbs.push({ label: 'Projects', href: '/dashboard/projects' });
+          
+          const projectIdSegment = segments[i + 1];
+          
+          // Add project name breadcrumb
+          breadcrumbs.push({
+            label: project.loading ? 'Loading...' : (project.name || 'Unknown Project'),
+            href: `/dashboard/projects/${projectIdSegment}`,
+            loading: project.loading,
+          });
+
+          // Skip the project ID segment
+          i++;
+
+          // Handle project sub-routes (settings, scans, etc.)
+          if (segments[i + 1]) {
+            const subRoute = segments[i + 1];
+            breadcrumbs.push({
+              label: formatLabel(subRoute),
+              href: `/dashboard/projects/${projectIdSegment}/${subRoute}`,
+            });
+            i++;
+          }
+        } else if (segments[i + 1] === 'new') {
+          // Handle /projects/new route
+          breadcrumbs.push({ label: 'Projects', href: '/dashboard/projects' });
+          breadcrumbs.push({ label: 'New Project', href: '/dashboard/projects/new' });
+          i++;
+        } else {
+          // Just /projects
+          breadcrumbs.push({ label: 'Projects', href });
         }
+      } else if (segment === 'settings') {
+        breadcrumbs.push({ label: 'Settings', href });
+      } else if (segment === 'integrations') {
+        breadcrumbs.push({ label: 'Integrations', href });
+      } else if (segment === 'members') {
+        breadcrumbs.push({ label: 'Members', href });
+      } else if (segment === 'billing') {
+        breadcrumbs.push({ label: 'Billing', href });
+      } else if (segment === 'profile') {
+        breadcrumbs.push({ label: 'Profile', href });
+      } else if (!isUUID(segment)) {
+        // Only add if it's not a UUID (to avoid showing IDs in breadcrumbs)
+        breadcrumbs.push({
+          label: formatLabel(segment),
+          href,
+        });
       }
-    } else if (pathname.includes("/team")) {
-      items.push({ label: "Team", href: `${projectUrl}/team` });
     }
-    return items;
+
+    return breadcrumbs;
   };
 
-  const items = generateItems();
+  const breadcrumbs = getBreadcrumbs();
+
+  if (breadcrumbs.length <= 1) {
+    return null; // Don't show breadcrumbs if we're just on the dashboard
+  }
 
   return (
-    <div className="w-full border-b mb-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <Breadcrumb className="px-4 sm:px-6 py-3">
-        <BreadcrumbList>
-          {items.map((item, index) => {
-            const isLast = index === items.length - 1;
-            const isActive = item.active || isLast; 
+    <nav aria-label="Breadcrumb" className="mb-6">
+      <ol className="flex items-center space-x-2 text-sm text-muted-foreground">
+        {breadcrumbs.map((crumb, index) => {
+          const isLast = index === breadcrumbs.length - 1;
 
-            return (
-              <div key={index} className="flex items-center">
-                <BreadcrumbItem>
-                  {isActive ? (
-                    <BreadcrumbPage className="font-medium text-foreground flex items-center">
-                      {item.label}
-                    </BreadcrumbPage>
-                  ) : (
-                    <BreadcrumbLink asChild>
-                      <Link 
-                        href={item.href} 
-                        className="text-muted-foreground hover:text-foreground transition-colors flex items-center"
-                      >
-                        {item.label}
-                      </Link>
-                    </BreadcrumbLink>
+          return (
+            <li key={crumb.href} className="flex items-center">
+              {index > 0 && (
+                <ChevronRight className="h-4 w-4 mx-2 flex-shrink-0" />
+              )}
+              
+              {isLast ? (
+                <span className="font-medium text-foreground flex items-center gap-2">
+                  {crumb.loading && (
+                    <Loader2 className="h-3 w-3 animate-spin" />
                   )}
-                </BreadcrumbItem>
-                {!isLast && (
-                  <BreadcrumbSeparator className="mx-2">
-                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
-                  </BreadcrumbSeparator>
-                )}
-              </div>
-            );
-          })}
-        </BreadcrumbList>
-      </Breadcrumb>
-    </div>
+                  {crumb.label}
+                </span>
+              ) : (
+                <Link
+                  href={crumb.href}
+                  className="hover:text-foreground transition-colors flex items-center gap-2"
+                >
+                  {index === 0 && <Home className="h-4 w-4" />}
+                  {crumb.loading && (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  )}
+                  {crumb.label}
+                </Link>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
+}
+
+// Helper functions
+function formatLabel(segment: string): string {
+  return segment
+    .split('-')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function isUUID(str: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str);
 }

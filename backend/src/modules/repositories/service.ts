@@ -1,14 +1,18 @@
 // src/modules/repositories/service.ts
 import type { FastifyInstance } from "fastify";
 import type { RepositoryImportInput, DatabaseRepository } from "../integrations/github/types";
-import * as githubService from "../integrations/github/service";
+// import * as githubService from "../integrations/github/service";
+import { GitHubService } from "../integrations/github/service";
 import { getRepositoryLimits } from "./validation";
 import { validateRepositoryImport } from "./validation";
 import { EntitlementsService } from "../entitlements/service";
+import { IntegrationsRepository } from "../integrations/repository";
 
 /**
  * Import repositories
  */
+
+
 export async function importRepositories(
     fastify: FastifyInstance,
     workspaceId: string,
@@ -442,6 +446,11 @@ export async function getConnectedProviders(
     fastify: FastifyInstance,
     workspaceId: string
 ) {
+    const integrationsRepo = new IntegrationsRepository(fastify);
+    
+    // 2. Instantiate the service
+    const gitHubService = new GitHubService(integrationsRepo, fastify);
+
     const { data: integrations, error } = await fastify.supabase
         .from("integrations")
         .select("provider, connected, connected_at")
@@ -458,7 +467,7 @@ export async function getConnectedProviders(
 
     if (githubIntegration?.connected) {
         try {
-            githubAccount = await githubService.getGitHubAccountInfo(fastify, workspaceId);
+            githubAccount = await gitHubService.getGitHubAccountInfo(workspaceId);
         } catch (err) {
             fastify.log.warn({ err, workspaceId }, "Failed to fetch GitHub account info");
         }
@@ -496,8 +505,12 @@ export async function fetchGitHubReposForImport(
     fastify: FastifyInstance,
     workspaceId: string
 ) {
+    // Instantiate GitHub service
+    const integrationsRepo = new IntegrationsRepository(fastify);
+    const gitHubService = new GitHubService(integrationsRepo, fastify);
+
     // Fetch from GitHub API
-    const repositories = await githubService.fetchGitHubRepositories(fastify, workspaceId);
+    const repositories = await gitHubService.fetchRepositories(workspaceId);
 
     // Get already imported repos
     const { data: importedRepos } = await fastify.supabase

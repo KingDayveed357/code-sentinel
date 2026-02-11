@@ -1,6 +1,5 @@
 # docker/docker-composer.yml
 
-
 services:
   redis:
     image: redis:7-alpine

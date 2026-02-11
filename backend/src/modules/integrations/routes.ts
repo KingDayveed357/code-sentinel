@@ -3,41 +3,16 @@ import type { FastifyInstance } from "fastify";
 import * as controller from "./controller";
 import * as githubAppController from "./github-app/controller";
 import { verifyAuth, loadProfile } from "../../middleware/auth";
-import { requireAuth, requireProfile } from "../../middleware/gatekeepers";
+import { requireAuth, requireProfile, requireWorkspace } from "../../middleware/gatekeepers";
 import { resolveWorkspace } from "../../middleware/workspace";
 
-export default async function integrationsRoutes(fastify: FastifyInstance) {
-   
-    const fullPreHandler = [
-        verifyAuth,
-        loadProfile,
-        requireAuth,
-        requireProfile,
-        resolveWorkspace,
-    ];
-
-    // Get all integrations for workspace
-    fastify.get(
-        "/",
-        { preHandler: fullPreHandler },
-        async (req, reply) => controller.getIntegrationsController(fastify, req, reply)
-    );
-
-    /**
-     * Connect GitHub integration
-     * 
-     * Personal workspace: Accepts provider_token and creates OAuth integration
-     * Team workspace: Returns GitHub App installation URL
-     */
-    fastify.post<{ Body: { provider_token?: string } }>(
-        "/github/connect",
-        { preHandler: fullPreHandler },
-        async (req, reply) => controller.connectGitHubController(fastify, req, reply)
-    );
-
+/**
+ * Global integration routes (GitHub App callbacks, etc.)
+ * Registered at /api/integrations
+ */
+export async function integrationsGlobalRoutes(fastify: FastifyInstance) {
     /**
      * GitHub App installation endpoint
-     * 
      * Redirects to GitHub to install the app
      * Query params: workspace_id
      */
@@ -48,21 +23,46 @@ export default async function integrationsRoutes(fastify: FastifyInstance) {
 
     /**
      * GitHub App installation callback
-     * 
      * Called by GitHub after user installs the app
-     * Query params: installation_id, setup_action, state (workspace_id)
      */
     fastify.get<{ Querystring: { installation_id: string; setup_action: string; state: string } }>(
         "/github/app/callback",
         async (req, reply) => githubAppController.handleGitHubAppCallback(fastify, req, reply)
     );
+}
 
-    /**
-     * Disconnect integration from workspace
-     */
-    fastify.post<{ Params: { provider: string; } }>(
-        "/:provider/disconnect",
-        { preHandler: fullPreHandler },
-        async (req, reply) => controller.disconnectIntegrationController(fastify, req, reply)
+/**
+ * Workspace-scoped integration routes
+ * Registered in workspaces module
+ */
+export async function integrationsWorkspaceRoutes(fastify: FastifyInstance) {
+    const preHandler = [
+        verifyAuth,
+        loadProfile,
+        requireAuth,
+        requireProfile,
+        resolveWorkspace,
+        requireWorkspace
+    ];
+
+    // GET /api/workspaces/:workspaceId/integrations
+    fastify.get(
+        "/:workspaceId/integrations",
+        { preHandler },
+        async (req, reply) => controller.getIntegrationsController(fastify, req as any, reply)
+    );
+
+    // POST /api/workspaces/:workspaceId/integrations/github/connect
+    fastify.post<{ Body: { provider_token?: string } }>(
+        "/:workspaceId/integrations/github/connect",
+        { preHandler },
+        async (req, reply) => controller.connectGitHubController(fastify, req as any, reply)
+    );
+
+    // POST /api/workspaces/:workspaceId/integrations/:provider/disconnect
+    fastify.post<{ Params: { workspaceId: string, provider: string } }>(
+        "/:workspaceId/integrations/:provider/disconnect",
+        { preHandler },
+        async (req, reply) => controller.disconnectIntegrationController(fastify, req as any, reply)
     );
 }

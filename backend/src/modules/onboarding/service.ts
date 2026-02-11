@@ -97,7 +97,7 @@ export async function fetchGitHubRepositories(
     workspaceId: string
 ) {
     try {
-        return await githubService.fetchGitHubRepositories(fastify, workspaceId);
+        return await githubService.fetchRepositories(workspaceId);
     } catch (error: any) {
         // ✅ CRITICAL FIX: Missing GitHub integration is NOT an auth error
         // It's a normal product state - user hasn't connected GitHub yet

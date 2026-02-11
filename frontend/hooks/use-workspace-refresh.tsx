@@ -4,7 +4,8 @@
 import { useEffect, useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import { workspacesApi, type Workspace } from "@/lib/api/workspaces";
+import { listWorkspaces, type Workspace } from "@/lib/api/workspaces";
+
 
 /**
  * Smart hook that automatically refreshes workspace data when changes are detected
@@ -42,8 +43,7 @@ export function useWorkspaceRefresh(options?: {
       }
 
       // Fetch latest workspace list
-      const response = await workspacesApi.list();
-      const updatedWorkspaces = response.workspaces || [];
+      const updatedWorkspaces = await listWorkspaces();
 
       // Find the updated current workspace
       const updatedCurrentWorkspace = updatedWorkspaces.find(

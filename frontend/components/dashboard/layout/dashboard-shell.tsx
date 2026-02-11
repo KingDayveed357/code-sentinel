@@ -34,7 +34,7 @@ const navigation = [
   { name: "Vulnerabilities", href: "/dashboard/vulnerabilities", icon: AlertCircle, badge: "critical_high" },
   { name: "Projects", href: "/dashboard/projects", icon: FolderGit2 },
   { name: "Integrations", href: "/dashboard/integrations", icon: Plug },
-  { name: "Team", href: "/dashboard/teams", icon: Users },
+  { name: "Members", href: "/dashboard/members", icon: Users },
   // { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
@@ -100,7 +100,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           transform transition-all duration-300 ease-in-out 
           md:relative md:translate-x-0
           ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}
-          ${desktopSidebarCollapsed ? "md:w-20" : "md:w-64"} 
+          ${desktopSidebarCollapsed ? "md:w-16" : "md:w-64"} 
           w-64
         `}
       >

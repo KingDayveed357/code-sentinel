@@ -84,13 +84,61 @@ export async function requireOnboardingIncomplete(
 }
 
 /**
- * GATEKEEPER: Require Team or Enterprise plan
- * Blocks Free plan users
+ * GATEKEEPER: Require workspace context
+ * Must be used after resolveWorkspace middleware
+ */
+export async function requireWorkspace(
+    request: FastifyRequest,
+    reply: FastifyReply
+) {
+    if (!request.workspace) {
+        throw request.server.httpErrors.badRequest('Workspace context required');
+    }
+}
+
+/**
+ * GATEKEEPER: Require specific role within the ACTIVE workspace
+ * Usage: requireWorkspaceRole(["owner", "admin"])
+ */
+export function requireWorkspaceRole(allowedRoles: string[]) {
+    return async (request: FastifyRequest, reply: FastifyReply) => {
+        if (!request.workspace) {
+            throw request.server.httpErrors.badRequest('Workspace context required for role check');
+        }
+
+        const userRole = request.workspaceRole || 'viewer';
+
+        if (!allowedRoles.includes(userRole)) {
+            throw request.server.httpErrors.forbidden(
+                `Access denied in this workspace. Required role: ${allowedRoles.join(" or ")}. Current role: ${userRole}`
+            );
+        }
+    };
+}
+
+/**
+ * GATEKEEPER: Require Team or Enterprise plan (Workspace Level)
+ * Blocks Free plan users based on workspace plan
  */
 export async function requireTeamPlan(
     request: FastifyRequest,
     reply: FastifyReply
 ) {
+    // Check workspace plan first (Team/Enterprise workspaces)
+    if (request.workspace) {
+        const allowedPlans = ["Team", "Enterprise"];
+        // Also check if personal workspace owner has a plan on their profile?
+        // Ideally plan is unified on workspace object now.
+        // Assuming workspace.plan is populated correctly.
+        if (!allowedPlans.includes(request.workspace.plan) && !allowedPlans.includes(request.profile?.plan || 'Free')) {
+             throw request.server.httpErrors.forbidden(
+                `This feature requires a Team or Enterprise plan.`
+            );
+        }
+        return;
+    }
+    
+    // Fallback to user profile plan if no workspace context (legacy/global routes?)
     if (!request.profile) {
         throw request.server.httpErrors.unauthorized("User profile not found");
     }
@@ -106,12 +154,20 @@ export async function requireTeamPlan(
 
 /**
  * GATEKEEPER: Require Enterprise plan only
- * Blocks Free and Team plan users
  */
 export async function requireEnterprisePlan(
     request: FastifyRequest,
     reply: FastifyReply
 ) {
+     if (request.workspace) {
+        if (request.workspace.plan !== "Enterprise" && request.profile?.plan !== "Enterprise") {
+            throw request.server.httpErrors.forbidden(
+                `This feature requires an Enterprise plan.`
+            );
+        }
+        return;
+    }
+
     if (!request.profile) {
         throw request.server.httpErrors.unauthorized("User profile not found");
     }
@@ -124,26 +180,9 @@ export async function requireEnterprisePlan(
 }
 
 /**
- * GATEKEEPER: Require specific plan (flexible)
- * Usage: requirePlan(["Team", "Enterprise"])
- */
-export function requirePlan(allowedPlans: string[]) {
-    return async (request: FastifyRequest, reply: FastifyReply) => {
-        if (!request.profile) {
-            throw request.server.httpErrors.unauthorized("User profile not found");
-        }
-
-        if (!allowedPlans.includes(request.profile.plan)) {
-            throw request.server.httpErrors.forbidden(
-                `Access denied. Required plan: ${allowedPlans.join(" or ")}. Current plan: ${request.profile.plan}`
-            );
-        }
-    };
-}
-
-/**
- * GATEKEEPER: Require specific role (if using roles)
+ * GATEKEEPER: Require specific role (System Global)
  * Usage: requireRole(["admin", "moderator"])
+ * @deprecated Prefer requireWorkspaceRole for workspace-scoped actions
  */
 export function requireRole(allowedRoles: string[]) {
     return async (request: FastifyRequest, reply: FastifyReply) => {
@@ -155,36 +194,8 @@ export function requireRole(allowedRoles: string[]) {
 
         if (!allowedRoles.includes(userRole)) {
             throw request.server.httpErrors.forbidden(
-                `Access denied. Required role: ${allowedRoles.join(" or ")}. Current role: ${userRole}`
+                `Access denied. Required system role: ${allowedRoles.join(" or ")}. Current role: ${userRole}`
             );
         }
     };
 }
-
-
-export async function requireWorkspace(
-    request: FastifyRequest,
-    reply: FastifyReply
-) {
-    if (!request.workspace) {
-        throw request.server.httpErrors.badRequest('Workspace context required');
-    }
-}
-
-
-// export async function requireFeature(feature: string) {
-//   return async (request, reply) => {
-//     const hasAccess = await entitlements.hasFeature(
-//       request.profile.plan, 
-//       feature
-//     );
-    
-//     if (!hasAccess) {
-//       throw request.server.httpErrors.forbidden({
-//         code: 'FEATURE_NOT_AVAILABLE',
-//         feature,
-//         required_plan: entitlements.getMinimumPlanFor(feature)
-//       });
-//     }
-//   };
-// }

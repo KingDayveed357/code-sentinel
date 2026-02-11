@@ -1,9 +1,8 @@
-// hooks/use-entitlements.ts
-"use client";
-
-import { useState, useEffect, useCallback } from "react";
-import { entitlementsApi, entitlementsClient, type Entitlements } from "@/lib/api/entitlements";
-import { useAuth } from "./use-auth";
+import { useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { entitlementsApi, type Entitlements } from "@/lib/api/entitlements";
+import { useWorkspace } from "./use-workspace";
+import { useAuth } from "./use-auth"; // Keep imports if needed for types
 
 interface UseEntitlementsReturn {
   entitlements: Entitlements | null;
@@ -16,44 +15,35 @@ interface UseEntitlementsReturn {
   formatLimit: (value: number | null) => string;
 }
 
-/**
- * React hook for managing entitlements and usage tracking
- * Automatically refreshes when user changes and provides utility methods
- */
 export function useEntitlements(): UseEntitlementsReturn {
-  const { user, session } = useAuth();
-  const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const { workspace } = useWorkspace();
+  const queryClient = useQueryClient();
 
-  const fetchEntitlements = useCallback(async (forceRefresh: boolean = false) => {
-    if (!user || !session) {
-      setEntitlements(null);
-      setLoading(false);
-      return;
-    }
+  // Define query key
+  const queryKey = ['entitlements', workspace?.id];
 
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await entitlementsClient.getEntitlements(forceRefresh);
-      setEntitlements(data);
-    } catch (err) {
-      console.error("Failed to fetch entitlements:", err);
-      setError(err instanceof Error ? err : new Error("Failed to fetch entitlements"));
-    } finally {
-      setLoading(false);
-    }
-  }, [user, session]);
-
-  // Initial fetch and refresh on user change
-  useEffect(() => {
-    fetchEntitlements();
-  }, [fetchEntitlements]);
+  const { 
+    data: entitlements, 
+    isLoading, 
+    error,
+    refetch 
+  } = useQuery({
+    queryKey,
+    queryFn: async () => {
+      if (!workspace?.id) throw new Error("Workspace ID required");
+      console.log('💰 Fetching entitlements for workspace:', { 
+        workspaceId: workspace.id, 
+        name: workspace.name 
+      });
+      return entitlementsApi.getEntitlements(workspace.id);
+    },
+    enabled: !!workspace?.id,
+    staleTime: 1000 * 60 * 5, // 5 minutes (React Query cache, key-isolated!)
+  });
 
   const refresh = useCallback(async () => {
-    await fetchEntitlements(true);
-  }, [fetchEntitlements]);
+    await refetch();
+  }, [refetch]);
 
   const isApproachingLimit = useCallback((type: 'scans' | 'repositories'): boolean => {
     if (!entitlements) return false;
@@ -116,9 +106,9 @@ export function useEntitlements(): UseEntitlementsReturn {
   }, []);
 
   return {
-    entitlements,
-    loading,
-    error,
+    entitlements: entitlements || null,
+    loading: isLoading,
+    error: error as Error | null,
     refresh,
     isApproachingLimit,
     isLimitExceeded,

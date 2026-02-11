@@ -124,7 +124,7 @@ export default function GitHubIntegrationPage() {
       setConnecting(true);
       setError(null);
       
-      const result = await integrationsApi.connectGitHub(providerToken);
+      const result = await integrationsApi.connectGitHub(workspace.id, providerToken);
       
       if (result.success) {
         // setSuccess('GitHub connected successfully!');
@@ -242,7 +242,7 @@ export default function GitHubIntegrationPage() {
       setError(null);
 
       // Call backend to get appropriate connection flow
-      const result = await integrationsApi.connectGitHub();
+      const result = await integrationsApi.connectGitHub(workspace.id);
 
       if (result.mode === 'oauth') {
         // Personal workspace → Redirect to OAuth
@@ -269,11 +269,12 @@ export default function GitHubIntegrationPage() {
   };
 
   const handleDisconnect = async () => {
+    if (!workspace) return;
     try {
       setDisconnecting(true);
       setError(null);
       
-      const result = await integrationsApi.disconnectIntegration('github');
+      const result = await integrationsApi.disconnectIntegration(workspace.id, 'github');
       
       if (result.success) {
         toast.success('GitHub disconnected successfully');
@@ -327,7 +328,7 @@ export default function GitHubIntegrationPage() {
           description: r.description
         }));
       
-      const result = await repositoriesApi.import(reposToImport, "github");
+      const result = await repositoriesApi.import(workspace!.id, reposToImport, "github");
       
       if (result.success) {
         const count = result.imported;

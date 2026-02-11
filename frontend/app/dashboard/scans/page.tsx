@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useAuth } from "@/hooks/use-auth";
+import React, { useState } from "react";
+import { useScans } from "@/hooks/use-scans";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -20,41 +20,21 @@ import { ExternalLink } from "lucide-react";
 import { scansApi, type Scan } from "@/lib/api/scans";
 
 export default function ScansPage() {
-  const { workspaceId } = useAuth();
   const router = useRouter();
-  const [scans, setScans] = useState<Scan[]>([]);
-  const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
   const perPage = 15;
 
-  useEffect(() => {
-    if (!workspaceId) return;
-
-    const fetchScans = async () => {
-      setLoading(true);
-      try {
-        const result = await scansApi.getAll(workspaceId, {
-          page: currentPage,
-          limit: perPage,
-          sort: "recent",
-        });
-        
-        setScans(result.data || []);
-        setTotalPages(result.meta?.total_pages || 1);
-        setTotal(result.meta?.total || 0);
-      } catch (error) {
-        console.error("Failed to fetch scans:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchScans();
-  }, [workspaceId, currentPage]);
-
-  // Removed getStatusBadge - using ScanStatusBadge component instead
+  const {
+    scans,
+    loading,
+    error,
+    total,
+    totalPages
+  } = useScans({
+    page: currentPage,
+    limit: perPage,
+    sort: "recent",
+  });
 
   const formatDuration = (seconds: number | null) => {
     if (!seconds) return "—";

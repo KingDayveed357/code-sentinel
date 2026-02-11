@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { vulnerabilitiesApi, type Vulnerability } from "@/lib/api/vulnerabilities";
 import { toast } from "sonner";
-import { Divide } from "lucide-react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 
 export interface VulnerabilityFilters {
   severity?: string;
@@ -10,9 +10,11 @@ export interface VulnerabilityFilters {
   search?: string;
   page?: number;
   limit?: number;
+  sort?: string;
 }
 
 export interface UseVulnerabilitiesOptions {
+  workspaceId?: string;
   scanId?: string;
   projectId?: string;
   type?: "sast" | "sca" | "secrets" | "iac" | "container";
@@ -41,10 +43,29 @@ export interface UseVulnerabilitiesReturn {
   ) => Promise<Vulnerability | null>;
 }
 
-export function useVulnerabilities(
-  options: UseVulnerabilitiesOptions = {}
-): UseVulnerabilitiesReturn {
+// Define query keys for cache management
+const vulnKeys = {
+  all: (workspaceId: string) => ['vulnerabilities', workspaceId] as const,
+  list: (workspaceId: string, params: any) => [...vulnKeys.all(workspaceId), 'list', params] as const,
+  detail: (workspaceId: string, id: string) => [...vulnKeys.all(workspaceId), 'detail', id] as const,
+  stats: (workspaceId: string) => [...vulnKeys.all(workspaceId), 'stats'] as const,
+};
+
+export function useVulnerabilityStats(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: workspaceId ? vulnKeys.stats(workspaceId) : ['vulnerability-stats', 'none'],
+    queryFn: async () => {
+      if (!workspaceId) throw new Error("Workspace ID required");
+      return vulnerabilitiesApi.getStats(workspaceId);
+    },
+    enabled: !!workspaceId,
+    staleTime: 1000 * 60 * 5, // 5 minutes
+  });
+}
+
+export function useVulnerabilities(options: UseVulnerabilitiesOptions): UseVulnerabilitiesReturn {
   const {
+    workspaceId,
     scanId,
     projectId,
     type,
@@ -53,178 +74,130 @@ export function useVulnerabilities(
     refetchInterval,
   } = options;
 
+  const queryClient = useQueryClient();
 
-  const [vulnerabilities, setVulnerabilities] = useState<Vulnerability[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pages, setPages] = useState(1);
-  
-  // Prevent duplicate fetches
-  const fetchingRef = useRef(false);
-  const mountedRef = useRef(true);
+  // Construct stable query params
+  const queryParams = {
+    workspaceId,
+    scanId,
+    projectId,
+    type,
+    page: filters.page,
+    limit: filters.limit,
+    status: filters.status,
+    severity: filters.severity,
+    search: filters.search,
+    sort: filters.sort,
+  };
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const { 
+    data, 
+    isLoading, 
+    error: queryError, 
+    refetch 
+  } = useQuery({
+    queryKey: workspaceId ? vulnKeys.list(workspaceId, queryParams) : ['vulnerabilities', 'none'],
+    queryFn: async () => {
+      if (!workspaceId) throw new Error("Workspace ID required");
+      
+      console.log('🛡️ Fetching vulnerabilities:', queryParams);
 
-  const fetchVulnerabilities = useCallback(async () => {
-    if (!scanId && !projectId) {
-      setError("Either scanId or projectId is required");
-      return;
-    }
-
-    // Prevent duplicate calls
-    if (fetchingRef.current) {
-      return;
-    }
-
-    try {
-      fetchingRef.current = true;
-      setLoading(true);
-      setError(null);
-
-      let response;
-
-      if (scanId && type) {
-        // Fetch by scan and type
-        response = await vulnerabilitiesApi.getVulnerabilitiesByScanAndType(
+      if (scanId) {
+        const response = await vulnerabilitiesApi.getByScan(
+          workspaceId,
           scanId,
-          type,
-          filters
+          {
+            page: filters.page,
+            limit: filters.limit,
+            status: filters.status,
+            severity: filters.severity ? [filters.severity] : undefined,
+          }
         );
-      } else if (scanId) {
-        // Fetch all vulnerabilities for a scan
-        response = await vulnerabilitiesApi.getVulnerabilitiesByScan(
-          scanId,
-          filters
-        );
-      } else {
-        // This would require a new API endpoint for project-level queries
-        throw new Error("Project-level queries not yet implemented");
-      }
+        return {
+          vulnerabilities: response.vulnerabilities || [],
+          total: response.total || 0,
+          page: response.page || 1,
+          pages: response.pages || 1,
+        };
+      } 
+      
+      const response = await vulnerabilitiesApi.getAll(workspaceId, {
+        page: filters.page || 1,
+        limit: filters.limit || 15,
+        search: filters.search,
+        severity: filters.severity ? [filters.severity] : undefined,
+        status: filters.status,
+        sort: filters.sort as any,
+      });
 
-      // Only update state if component is still mounted
-      if (mountedRef.current) {
-        setVulnerabilities(response.vulnerabilities);
-        setTotal(response.total);
-        setPage(response.page);
-        setPages(response.pages);
-      }
-    } catch (err: any) {
-      const errorMessage = err.message || "Failed to fetch vulnerabilities";
-      if (mountedRef.current) {
-        setError(errorMessage);
-      }
-      console.error("Error fetching vulnerabilities:", err);
-    } finally {
-      fetchingRef.current = false;
-      if (mountedRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [scanId, projectId, type, JSON.stringify(filters)]);
-
-  const refetch = useCallback(async () => {
-    await fetchVulnerabilities();
-  }, [fetchVulnerabilities]);
-
-  const updateStatus = useCallback(
-    async (
-      id: string,
-      vulnType: "sast" | "sca" | "secrets" | "iac" | "container",
-      status: "open" | "in_review" | "accepted" | "false_positive" | "wont_fix" | "fixed",
-      note?: string
-    ) => {
-      try {
-        const updated = await vulnerabilitiesApi.updateStatus(
-          id,
-          vulnType,
-          status,
-          note
-        );
-
-        // Update local state
-        setVulnerabilities((prev) =>
-          prev.map((vuln) => (vuln.id === id ? updated : vuln))
-        );
-
-        toast.success(`Vulnerability marked as ${status.replace("_", " ")}`);
-      } catch (err: any) {
-        toast.error("Update Failed")
-        throw err;
-      }
+      return {
+        vulnerabilities: (response as any).data || [],
+        total: (response as any).meta?.total || 0,
+        page: (response as any).meta?.current_page || 1,
+        pages: (response as any).meta?.total_pages || 1,
+      };
     },
-    [toast]
-  );
+    enabled: !!workspaceId && autoFetch,
+    refetchInterval: refetchInterval,
+    staleTime: 1000 * 30, // 30 seconds
+    placeholderData: keepPreviousData,
+  });
 
-  const getDetails = useCallback(
-    async (
-      id: string,
-      vulnType: "sast" | "sca" | "secrets" | "iac" | "container"
-    ): Promise<Vulnerability | null> => {
-      try {
-        const details = await vulnerabilitiesApi.getVulnerabilityDetails(
-          id,
-          vulnType
-        );
-        return details;
-      } catch (err: any) {
-        toast.error("Failed to Load Details");
-        return null;
-      }
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, status, note }: { id: string, status: string, note?: string }) => {
+      if (!workspaceId) throw new Error("Workspace ID required");
+      return vulnerabilitiesApi.updateStatus(workspaceId, id, status as any, note);
     },
-    [toast]
-  );
-
-  // Auto-fetch on mount and when dependencies change
-  useEffect(() => {
-    if (autoFetch) {
-      fetchVulnerabilities();
+    onSuccess: (updatedVuln) => {
+      // Invalidate list queries
+      if (workspaceId) {
+        queryClient.invalidateQueries({ queryKey: vulnKeys.all(workspaceId) });
+      }
+      toast.success(`Vulnerability updated`);
+    },
+    onError: (err: any) => {
+      toast.error("Update Failed");
+      console.error(err);
     }
-  }, [autoFetch, fetchVulnerabilities]);
-
-  // Polling interval
-  useEffect(() => {
-    if (!refetchInterval) return;
-
-    const interval = setInterval(() => {
-      fetchVulnerabilities();
-    }, refetchInterval);
-
-    return () => clearInterval(interval);
-  }, [refetchInterval, fetchVulnerabilities]);
+  });
 
   return {
-    vulnerabilities,
-    loading,
-    error,
-    total,
-    page,
-    pages,
-    refetch,
-    updateStatus,
-    getDetails,
+    vulnerabilities: data?.vulnerabilities || [],
+    loading: isLoading,
+    error: queryError ? (queryError as Error).message : null,
+    total: data?.total || 0,
+    page: data?.page || 1,
+    pages: data?.pages || 1,
+    refetch: async () => { await refetch(); },
+    updateStatus: async (id, type, status, note) => {
+      await updateMutation.mutateAsync({ id, status, note });
+    },
+    getDetails: async (id, type) => {
+      if (!workspaceId) return null;
+      return queryClient.fetchQuery({
+        queryKey: vulnKeys.detail(workspaceId, id),
+        queryFn: () => vulnerabilitiesApi.getById(workspaceId, id),
+        staleTime: 1000 * 60 * 5, // 5 minutes
+      });
+    },
   };
-}
+} 
 
 // Specialized hook for scan reports
 export function useScanVulnerabilities(
+  workspaceId: string,
   scanId: string,
-  options: Omit<UseVulnerabilitiesOptions, "scanId"> = {}
+  options: Omit<UseVulnerabilitiesOptions, "workspaceId" | "scanId"> = {}
 ) {
   return useVulnerabilities({
     ...options,
+    workspaceId,
     scanId,
   });
 }
 
-// Hook for fetching all vulnerability types for a scan - FIXED VERSION
-export function useAllScanVulnerabilities(scanId: string) {
+// Hook for fetching all vulnerability types for a scan
+export function useAllScanVulnerabilities(workspaceId: string, scanId: string) {
   const [allVulnerabilities, setAllVulnerabilities] = useState<Vulnerability[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -247,8 +220,8 @@ export function useAllScanVulnerabilities(scanId: string) {
       return;
     }
 
-    if (!scanId) {
-      setError("Scan ID is required");
+    if (!scanId || !workspaceId) {
+      setError("Scan ID and Workspace ID are required");
       setLoading(false);
       return;
     }
@@ -258,15 +231,16 @@ export function useAllScanVulnerabilities(scanId: string) {
       setLoading(true);
       setError(null);
 
-      // ✅ TRUST FIX: Use unified endpoint (1 call instead of 5)
-      const response = await vulnerabilitiesApi.getVulnerabilitiesByScan(
+      // Use ByScan endpoint to get all vulnerabilities for a scan
+      const response = await vulnerabilitiesApi.getByScan(
+        workspaceId,
         scanId,
         {} // No filters - get all vulnerabilities
       );
 
       if (mountedRef.current) {
         // Backend already deduplicates - no client-side dedup needed
-        setAllVulnerabilities(response.vulnerabilities);
+        setAllVulnerabilities(response.vulnerabilities || []);
         initialFetchDone.current = true;
       }
     } catch (err: any) {
@@ -280,7 +254,7 @@ export function useAllScanVulnerabilities(scanId: string) {
         setLoading(false);
       }
     }
-  }, [scanId]);
+  }, [scanId, workspaceId]);
 
   // Only fetch once on mount
   useEffect(() => {

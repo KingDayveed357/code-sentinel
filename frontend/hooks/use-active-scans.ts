@@ -1,7 +1,6 @@
-"use client";
-
-import { useEffect, useState } from "react";
-import { useAuth } from "@/hooks/use-auth";
+import { useState, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useWorkspace } from "@/hooks/use-workspace";
 import { scansApi } from "@/lib/api/scans";
 
 export interface ActiveScan {
@@ -18,12 +17,12 @@ export interface ActiveScan {
 }
 
 export function useActiveScans() {
-  const { workspaceId } = useAuth();
-  const [activeScans, setActiveScans] = useState<ActiveScan[]>([]);
+  const { workspace } = useWorkspace();
+  const workspaceId = workspace?.id;
   const [dismissedScans, setDismissedScans] = useState<Set<string>>(new Set());
 
+  // Restore dismissed scans from local storage on mount
   useEffect(() => {
-    // Load dismissed scans from localStorage
     const stored = localStorage.getItem("dismissedScans");
     if (stored) {
       try {
@@ -34,41 +33,34 @@ export function useActiveScans() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!workspaceId) return;
-
-    const fetchActiveScans = async () => {
+  const { data: activeScans = [] } = useQuery({
+    queryKey: ['active-scans', workspaceId],
+    queryFn: async () => {
+      if (!workspaceId) return [];
+      
       try {
-        // Fetch running and pending scans separately (backend doesn't support comma-separated values)
+        // Fetch running and pending scans separately
         const [runningResult, pendingResult] = await Promise.all([
           scansApi.getAll(workspaceId, {
-            page: 1,
-            limit: 10,
-            status: "running",
+            page: 1, limit: 10, status: "running",
           }).catch(() => ({ data: [], meta: { total: 0 } })),
           scansApi.getAll(workspaceId, {
-            page: 1,
-            limit: 10,
-            status: "pending",
+            page: 1, limit: 10, status: "pending",
           }).catch(() => ({ data: [], meta: { total: 0 } })),
         ]);
 
         const activeScansData = [
           ...(runningResult.data || []),
           ...(pendingResult.data || []),
-        ].filter((scan) => !dismissedScans.has(scan.id));
+        ];
 
         // Also check for recently completed/failed scans (last 30 seconds)
         const [completedResult, failedResult] = await Promise.all([
           scansApi.getAll(workspaceId, {
-            page: 1,
-            limit: 5,
-            status: "completed",
+            page: 1, limit: 5, status: "completed",
           }).catch(() => ({ data: [], meta: { total: 0 } })),
           scansApi.getAll(workspaceId, {
-            page: 1,
-            limit: 5,
-            status: "failed",
+            page: 1, limit: 5, status: "failed",
           }).catch(() => ({ data: [], meta: { total: 0 } })),
         ]);
 
@@ -76,21 +68,20 @@ export function useActiveScans() {
           ...(completedResult.data || []),
           ...(failedResult.data || []),
         ].filter((scan) => {
-          if (dismissedScans.has(scan.id)) return false;
           const completedAt = new Date(scan.completed_at || scan.created_at);
           const now = new Date();
           const diffMs = now.getTime() - completedAt.getTime();
           return diffMs < 30000; // 30 seconds
         });
 
-        // Combine and deduplicate, mapping to ActiveScan format
+        // Combine and deduplicate
         const combined = [...activeScansData, ...recentlyCompleted];
-        const unique = Array.from(
-          new Map(combined.map((s) => [s.id, s])).values()
-        );
+        const uniqueMap = new Map();
+        combined.forEach(s => uniqueMap.set(s.id, s));
+        const unique = Array.from(uniqueMap.values());
 
-        // ✅ FIX: Map scan data to ActiveScan format with progress_percentage
-        const mappedScans: ActiveScan[] = unique.map((scan) => ({
+        // Map to ActiveScan interface
+        return unique.map((scan: any) => ({
           id: scan.id,
           status: scan.status,
           repository: {
@@ -100,20 +91,20 @@ export function useActiveScans() {
           created_at: scan.created_at,
           completed_at: scan.completed_at,
           error_message: scan.error_message,
-          progress: scan.progress_percentage ?? undefined, // ✅ FIX: Use progress_percentage from backend
+          progress: scan.progress_percentage ?? undefined,
         }));
-
-        setActiveScans(mappedScans);
       } catch (error) {
         console.error("Failed to fetch active scans:", error);
+        return [];
       }
-    };
+    },
+    enabled: !!workspaceId,
+    refetchInterval: 5000,
+    staleTime: 1000, // Keep data fresh
+  });
 
-    fetchActiveScans();
-    const interval = setInterval(fetchActiveScans, 5000); // Poll every 5s
-
-    return () => clearInterval(interval);
-  }, [workspaceId, dismissedScans]);
+  // Filter out dismissed scans
+  const visibleScans = activeScans.filter((scan) => !dismissedScans.has(scan.id));
 
   const dismissScan = (scanId: string) => {
     setDismissedScans((prev) => {
@@ -122,8 +113,6 @@ export function useActiveScans() {
       localStorage.setItem("dismissedScans", JSON.stringify([...next]));
       return next;
     });
-
-    setActiveScans((prev) => prev.filter((scan) => scan.id !== scanId));
   };
 
   const clearDismissed = () => {
@@ -132,7 +121,7 @@ export function useActiveScans() {
   };
 
   return {
-    activeScans,
+    activeScans: visibleScans,
     dismissScan,
     clearDismissed,
   };

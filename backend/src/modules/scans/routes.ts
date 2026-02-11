@@ -1,67 +1,78 @@
-import type { FastifyInstance } from 'fastify';
-import * as controller from './controller';
-import { verifyAuth, loadProfile } from '../../middleware/auth';
+
+import type { FastifyInstance } from "fastify";
+import { verifyAuth, loadProfile } from "../../middleware/auth";
 import {
   requireAuth,
   requireProfile,
-  requireOnboardingCompleted,
-} from '../../middleware/gatekeepers';
-import { resolveWorkspace } from '../../middleware/workspace';
-import { ScannerOrchestrator } from '../../scanners/orchestrator';
+  requireWorkspace,
+} from "../../middleware/gatekeepers";
+import { resolveWorkspace } from "../../middleware/workspace";
+import {
+  listScansSchema,
+  startScanSchema,
+  getScanStatsSchema,
+  getScanDetailsSchema,
+  cancelScanSchema,
+  exportScanResultsSchema,
+} from "./schemas";
+import {
+  listScansController,
+  startScanController,
+  getScanStatsController,
+  getScanDetailsController,
+  cancelScanController,
+  exportScanResultsController,
+} from "./controller";
 
-export default async function scansRoutes(fastify: FastifyInstance) {
-  const preHandler = [
-    verifyAuth,
-    loadProfile,
-    requireAuth,
-    requireProfile,
-    requireOnboardingCompleted,
-    resolveWorkspace
-  ];
+export async function scansRoutes(fastify: FastifyInstance) {
+  // Apply workspace context middleware to all routes in this context
+  // Note: These hooks run SEQUENTIALLY
+  fastify.addHook("preHandler", verifyAuth);
+  fastify.addHook("preHandler", loadProfile);
+  fastify.addHook("preHandler", requireAuth);
+  fastify.addHook("preHandler", requireProfile);
+  fastify.addHook("preHandler", resolveWorkspace);
+  fastify.addHook("preHandler", requireWorkspace);
 
-  /**
-   * POST /api/scans/:repoId/start
-   * Start a new security scan
-   */
-  fastify.post('/:repoId/start', { preHandler }, controller.startScanController);
+  // GET /api/workspaces/:workspaceId/scans
+  fastify.get(
+    "/:workspaceId/scans",
+    { schema: listScansSchema },
+    (req, reply) => listScansController(fastify, req as any, reply)
+  );
 
-  /**
-   * GET /api/scans/:repoId/history
-   * Get scan history for a repository
-   */
-  fastify.get('/:repoId/history', { preHandler }, controller.getScanHistoryController);
+  // POST /api/workspaces/:workspaceId/scans
+  fastify.post(
+    "/:workspaceId/scans",
+    { schema: startScanSchema },
+    (req, reply) => startScanController(fastify, req as any, reply)
+  );
 
-  /**
-   * GET /api/scans/run/:scanId
-   * Get detailed scan status and summary
-   */
-  fastify.get('/run/:scanId', { preHandler }, controller.getScanStatusController);
+  // GET /api/workspaces/:workspaceId/scans/stats
+  fastify.get(
+    "/:workspaceId/scans/stats",
+    { schema: getScanStatsSchema },
+    (req, reply) => getScanStatsController(fastify, req as any, reply)
+  );
 
-  /**
-   * GET /api/scans/run/:scanId/logs
-   * Get real-time logs for a scan
-   */
-  fastify.get('/run/:scanId/logs', { preHandler }, controller.getScanLogsController);
+  // GET /api/workspaces/:workspaceId/scans/:scanId
+  fastify.get(
+    "/:workspaceId/scans/:scanId",
+    { schema: getScanDetailsSchema },
+    (req, reply) => getScanDetailsController(fastify, req as any, reply)
+  );
 
-  // Progress is tracked in scans table (progress_percentage, progress_stage)
-  // Frontend polls GET /run/:scanId to get progress updates
+  // POST /api/workspaces/:workspaceId/scans/:scanId/cancel
+  fastify.post(
+    "/:workspaceId/scans/:scanId/cancel",
+    { schema: cancelScanSchema },
+    (req, reply) => cancelScanController(fastify, req as any, reply)
+  );
 
-  /**
-   * GET /api/scans/run/:scanId/export?format=json|csv
-   * Export scan results
-   */
-  fastify.get('/run/:scanId/export', { preHandler }, controller.exportScanController);
-
-  
-  fastify.get('/test-scanners', async (req, reply) => {
-      const orchestrator = new ScannerOrchestrator(fastify);
-      const availability = await orchestrator.checkAvailability();
-      return reply.send({ scanners: availability });
-    });
-
-  /**
-   * DELETE /api/scans/run/:scanId
-   * Cancel a running scan
-   */
-  fastify.delete('/run/:scanId', { preHandler }, controller.cancelScanController);
+  // GET /api/workspaces/:workspaceId/scans/:scanId/export
+  fastify.get(
+    "/:workspaceId/scans/:scanId/export",
+    { schema: exportScanResultsSchema },
+    (req, reply) => exportScanResultsController(fastify, req as any, reply)
+  );
 }

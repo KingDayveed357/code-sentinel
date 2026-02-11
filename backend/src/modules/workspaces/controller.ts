@@ -1,130 +1,191 @@
-// src/modules/workspaces/controller.ts
-import type { FastifyRequest, FastifyReply } from "fastify";
-import type { FastifyInstance } from "fastify";
-import * as service from "./service";
+// =====================================================
+// modules/workspaces/controller.ts
+// Workspace controllers
+// =====================================================
+import type { FastifyRequest, FastifyReply } from 'fastify';
+import { WorkspaceService } from './service';
+import type { WorkspaceRole } from './types';
 
-/**
- * GET /api/workspaces
- * List all workspaces accessible to the current user
- */
-export async function listWorkspacesController(
-    request: FastifyRequest,
-    reply: FastifyReply
-) {
-    const userId = request.profile!.id;
-    const workspaces = await service.getUserWorkspaces(request.server, userId);
-
-    return reply.send({
-        workspaces,
-    });
+interface CreateWorkspaceBody {
+  name: string;
+  type: 'personal' | 'team';
+  plan?: string;
 }
 
+interface UpdateWorkspaceBody {
+  name?: string;
+  settings?: Record<string, any>;
+}
 
-export async function bootstrapWorkspaceController(
-  fastify: FastifyInstance,
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
-  const userId = request.profile!.id;
-  const userName = request.profile!.full_name || 'My';
-  const userPlan = request.profile!.plan || 'Free';
+interface InviteMemberBody {
+  email: string;
+  role: WorkspaceRole;
+}
 
-  fastify.log.info({ userId }, 'Workspace bootstrap requested');
+interface UpdateMemberRoleBody {
+  role: WorkspaceRole;
+}
 
-  try {
-    // Step 1: Try to find existing personal workspace
-    const { data: existing, error: fetchError } = await fastify.supabase
-      .from('workspaces')
-      .select('*')
-      .eq('owner_id', userId)
-      .eq('type', 'personal')
-      .maybeSingle(); // Use maybeSingle to avoid error on 0 rows
+interface AcceptInvitationParams {
+  token: string;
+}
 
-    // Found existing workspace
-    if (existing) {
-      fastify.log.info(
-        { userId, workspaceId: existing.id },
-        'Personal workspace already exists'
-      );
-      return reply.send({
-        workspace: existing,
-        created: false,
-      });
-    }
+export class WorkspaceController {
+  constructor(private service: WorkspaceService) {}
 
-    // Check for unexpected fetch errors
-    if (fetchError) {
-      fastify.log.error({ fetchError, userId }, 'Unexpected error fetching workspace');
-      throw fastify.httpErrors.internalServerError('Failed to query workspace');
-    }
+  async listWorkspaces(req: FastifyRequest, reply: FastifyReply) {
+    const userId = req.user!.id;
+    const workspaces = await this.service.getUserWorkspaces(userId);
+    return reply.send(workspaces);
+  }
 
-    // Step 2: No workspace exists - create one
-    const workspaceSlug = `user-${userId}`;
-    const workspaceName = `${userName}'s Workspace`;
+  async getWorkspace(req: FastifyRequest<{ Params: { workspaceId: string } }>, reply: FastifyReply) {
+    const { workspaceId } = req.params;
+    const userId = req.user!.id;
+    const workspace = await this.service.getWorkspaceWithRole(workspaceId, userId);
+    return reply.send(workspace);
+  }
 
-    const { data: newWorkspace, error: createError } = await fastify.supabase
-      .from('workspaces')
-      .insert({
-        id: userId, // Use userId as workspace ID for personal workspace
-        name: workspaceName,
-        slug: workspaceSlug,
-        type: 'personal',
-        owner_id: userId,
-        team_id: null,
-        plan: userPlan,
-        settings: {},
-      })
-      .select()
-      .single();
+  async createWorkspace(
+    req: FastifyRequest<{ Body: CreateWorkspaceBody }>,
+    reply: FastifyReply
+  ) {
+    const userId = req.user!.id;
+    const workspace = await this.service.createWorkspace(userId, req.body);
+    return reply.status(201).send(workspace);
+  }
 
-    // Handle creation errors
-    if (createError) {
-      // CRITICAL: Race condition - another request created it
-      if (createError.code === '23505') { // Duplicate key
-        fastify.log.warn({ userId }, 'Race condition: workspace created concurrently');
-
-        // Retry fetch
-        const { data: retryWorkspace, error: retryError } = await fastify.supabase
-          .from('workspaces')
-          .select('*')
-          .eq('owner_id', userId)
-          .eq('type', 'personal')
-          .single();
-
-        if (retryError || !retryWorkspace) {
-          fastify.log.error({ retryError, userId }, 'Failed to fetch after race condition');
-          throw fastify.httpErrors.internalServerError('Workspace creation conflict');
-        }
-
-        return reply.send({
-          workspace: retryWorkspace,
-          created: false, // Another process created it
-        });
-      }
-
-      // Other creation errors
-      fastify.log.error({ createError, userId }, 'Failed to create workspace');
-      throw fastify.httpErrors.internalServerError('Failed to create workspace');
-    }
-
-    // Success
-    fastify.log.info(
-      { userId, workspaceId: newWorkspace!.id },
-      'Personal workspace created successfully'
+  async updateWorkspace(
+    req: FastifyRequest<{
+      Params: { workspaceId: string };
+      Body: UpdateWorkspaceBody;
+    }>,
+    reply: FastifyReply
+  ) {
+    const { workspaceId } = req.params;
+    const userId = req.user!.id;
+    const workspace = await this.service.updateWorkspace(
+      workspaceId,
+      userId,
+      req.body
     );
+    return reply.send(workspace);
+  }
 
-    return reply.send({
-      workspace: newWorkspace,
-      created: true,
+  async deleteWorkspace(
+    req: FastifyRequest<{ Params: { workspaceId: string } }>,
+    reply: FastifyReply
+  ) {
+    const { workspaceId } = req.params;
+    const userId = req.user!.id;
+    await this.service.deleteWorkspace(workspaceId, userId);
+    return reply.status(204).send();
+  }
+
+  async getMembers(
+    req: FastifyRequest<{ Params: { workspaceId: string } }>,
+    reply: FastifyReply
+  ) {
+    const { workspaceId } = req.params;
+    const members = await this.service.getMembers(workspaceId);
+    return reply.send(members);
+  }
+
+  async inviteMember(
+    req: FastifyRequest<{
+      Params: { workspaceId: string };
+      Body: InviteMemberBody;
+    }>,
+    reply: FastifyReply
+  ) {
+    const { workspaceId } = req.params;
+    const { email, role } = req.body;
+    const userId = req.user!.id;
+    const invitation = await this.service.inviteMember(
+      workspaceId,
+      email,
+      role,
+      userId
+    );
+    return reply.status(201).send(invitation);
+  }
+
+  async acceptInvitation(
+    req: FastifyRequest<{ Params: AcceptInvitationParams }>,
+    reply: FastifyReply
+  ) {
+    const { token } = req.params;
+    const userId = req.user!.id;
+    const result = await this.service.acceptInvitation(token, userId);
+    return reply.send(result);
+  }
+
+  async removeMember(
+    req: FastifyRequest<{
+      Params: { workspaceId: string; memberId: string };
+    }>,
+    reply: FastifyReply
+  ) {
+    const { workspaceId, memberId } = req.params;
+    const userId = req.user!.id;
+    await this.service.removeMember(workspaceId, memberId, userId);
+    return reply.status(204).send();
+  }
+
+  async updateMemberRole(
+    req: FastifyRequest<{
+      Params: { workspaceId: string; memberId: string };
+      Body: UpdateMemberRoleBody;
+    }>,
+    reply: FastifyReply
+  ) {
+    const { workspaceId, memberId } = req.params;
+    const { role } = req.body;
+    const userId = req.user!.id;
+    const member = await this.service.updateMemberRole(
+      workspaceId,
+      memberId,
+      role,
+      userId
+    );
+    return reply.send(member);
+  }
+
+  async getActivity(
+    req: FastifyRequest<{
+      Params: { workspaceId: string };
+      Querystring: { limit?: string; offset?: string };
+    }>,
+    reply: FastifyReply
+  ) {
+    const { workspaceId } = req.params;
+    const limit = req.query.limit ? parseInt(req.query.limit) : undefined;
+    const offset = req.query.offset ? parseInt(req.query.offset) : undefined;
+    const activity = await this.service.getActivity(workspaceId, {
+      limit,
+      offset,
     });
+    return reply.send(activity);
+  }
 
-  } catch (error) {
-    fastify.log.error({ error, userId }, 'Workspace bootstrap failed');
-    
-    if (error && typeof error === 'object' && 'statusCode' in error) {
-      throw error; // Re-throw HTTP errors
-    }
-    
-    throw fastify.httpErrors.internalServerError('Workspace bootstrap failed');
+  async getInvitations(
+    req: FastifyRequest<{ Params: { workspaceId: string } }>,
+    reply: FastifyReply
+  ) {
+    const { workspaceId } = req.params;
+    const invitations = await this.service.getInvitations(workspaceId);
+    return reply.send(invitations);
+  }
+
+  async cancelInvitation(
+    req: FastifyRequest<{
+      Params: { workspaceId: string; invitationId: string };
+    }>,
+    reply: FastifyReply
+  ) {
+    const { workspaceId, invitationId } = req.params;
+    const userId = req.user!.id;
+    await this.service.cancelInvitation(workspaceId, invitationId, userId);
+    return reply.status(204).send();
   }
 }

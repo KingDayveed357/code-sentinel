@@ -1,14 +1,14 @@
 // stores/workspace-store.ts
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
-import type { Workspace } from '@/lib/api/workspaces';
+import type { Workspace, WorkspaceWithRole } from '@/lib/api/workspaces';
 
 interface WorkspaceState {
   // Current active workspace
-  workspace: Workspace | null;
+  workspace: WorkspaceWithRole | null;
   
   // All available workspaces
-  workspaces: Workspace[];
+  workspaces: WorkspaceWithRole[];
   
   // Loading states
   loading: boolean;
@@ -18,9 +18,9 @@ interface WorkspaceState {
   lastRefreshed: number | null;
   
   // Actions
-  setWorkspace: (workspace: Workspace) => void;
-  setWorkspaces: (workspaces: Workspace[]) => void;
-  updateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
+  setWorkspace: (workspace: WorkspaceWithRole | null) => void;
+  setWorkspaces: (workspaces: WorkspaceWithRole[]) => void;
+  updateWorkspace: (workspaceId: string, updates: Partial<WorkspaceWithRole>) => void;
   setLoading: (loading: boolean) => void;
   setInitializing: (initializing: boolean) => void;
   markRefreshed: () => void;

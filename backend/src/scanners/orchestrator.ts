@@ -59,6 +59,7 @@ export class ScannerOrchestrator {
     scanId: string,
     config: ScannerConfig,
     commitHash: string,
+    scanType?: 'quick' | 'full'
   ): Promise<OrchestrationResult> {
     const startTime = Date.now();
 
@@ -130,7 +131,7 @@ export class ScannerOrchestrator {
           }
           
           this.fastify.log.debug({ scanId, scanner: name }, "Starting scanner");
-          const result = await scanner.scan(workspacePath, scanId);
+          const result = await scanner.scan(workspacePath, scanId, scanType);
 
           // ✅ REAL PROGRESS: Emit scanner completion event
           if (this.progressCallback) {
@@ -237,7 +238,7 @@ export class ScannerOrchestrator {
   async checkAvailability(): Promise<{
     [scanner: string]: boolean;
   }> {
-    const { asyncCommandExists } = await import("../../utils/async-exec");
+    const { asyncCommandExists } = await import("../utils/async-exec");
     const availability: { [scanner: string]: boolean } = {};
 
     const checks = [

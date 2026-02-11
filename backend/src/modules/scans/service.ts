@@ -1,79 +1,65 @@
-// src/modules/scans/service.ts
+
 import type { FastifyInstance } from "fastify";
-import type { ScanRun } from "./types";
+import { ScansRepository } from "./repository";
 import { EntitlementsService } from "../entitlements/service";
-import { SCAN_PROFILES, getProfile } from "../../scanners/scan-profiles";
+import { getProfile } from "../../scanners/scan-profiles";
+import type { ScanFilters, ScanDetail, PaginatedScansResponse, ScanWithRepository } from "./types";
 
-export async function startScan(
-  fastify: FastifyInstance,
-  workspaceId: string,
-  userId: string,
-  userPlan: string,
-  repositoryId: string,
-  branch: string,
-  scanType: "quick" | "full"
-): Promise<{ scan_id: string; status: string; message: string }> {
-  const normalizedScanType = scanType || 'full';
-  
-  const entitlements = new EntitlementsService(fastify);
+export class ScansService {
+  constructor(
+    private readonly repository: ScansRepository,
+    private readonly fastify: FastifyInstance
+  ) {}
 
-  // ✅ FIX: Check monthly limit only (concurrent checked separately below)
-  const monthlyLimitCheck = await entitlements.checkMonthlyLimit(workspaceId, userPlan);
+  async startScan(
+    workspaceId: string,
+    userId: string,
+    userPlan: string,
+    repositoryId: string,
+    branch: string,
+    scanType: "quick" | "full"
+  ): Promise<{ scan_id: string; status: string; message: string }> {
+    const normalizedScanType = scanType || "full";
+    const entitlements = new EntitlementsService(this.fastify);
 
-  if (!monthlyLimitCheck.allowed) {
-    throw fastify.httpErrors.forbidden({
-      code: "MONTHLY_SCAN_LIMIT_REACHED",
-      current: monthlyLimitCheck.current,
-      limit: monthlyLimitCheck.limit,
-      message: monthlyLimitCheck.message,
-      upgrade_url: "/dashboard/billing",
-    });
-  }
+    // Check monthly limit
+    const monthlyLimitCheck = await entitlements.checkMonthlyLimit(workspaceId, userPlan);
+    if (!monthlyLimitCheck.allowed) {
+      throw this.fastify.httpErrors.forbidden(monthlyLimitCheck.message || 'Monthly scan limit reached');
+    }
 
-  // Validate repository
-  const { data: repo, error: repoError } = await fastify.supabase
-    .from("repositories")
-    .select("id, full_name, status")
-    .eq("id", repositoryId)
-    .eq("workspace_id", workspaceId)
-    .single();
+    // Validate repository
+    const { data: repo, error: repoError } = await this.fastify.supabase
+      .from("repositories")
+      .select("id, full_name, status")
+      .eq("id", repositoryId)
+      .eq("workspace_id", workspaceId)
+      .single();
 
-  if (repoError || !repo) {
-    throw fastify.httpErrors.notFound("Repository not found");
-  }
+    if (repoError || !repo) {
+      throw this.fastify.httpErrors.notFound("Repository not found");
+    }
 
-  if (repo.status !== "active") {
-    throw fastify.httpErrors.badRequest("Repository is not active");
-  }
+    if (repo.status !== "active") {
+      throw this.fastify.httpErrors.badRequest("Repository is not active");
+    }
 
-  // ✅ FIX: Single source of truth for concurrent scans - direct database query
-  // This prevents issues where usage_tracking.concurrent_scans gets out of sync
-  const concurrentLimit = getConcurrentScanLimit(userPlan);
+    // Check concurrent limit
+    const concurrentLimit = this.getConcurrentScanLimit(userPlan);
+    const runningScanCount = await this.repository.countRunningScans(workspaceId);
 
-  const { count: runningScanCount } = await fastify.supabase
-    .from("scans")
-    .select("id", { count: "exact", head: true })
-    .eq("workspace_id", workspaceId)
-    .in("status", ["pending", "running", "normalizing", "ai_enriching"]);
+    if (runningScanCount >= concurrentLimit) {
+      throw this.fastify.httpErrors.tooManyRequests(
+        `Maximum ${concurrentLimit} concurrent scans allowed for ${userPlan} plan.`
+      );
+    }
 
-  if ((runningScanCount || 0) >= concurrentLimit) {
-    throw fastify.httpErrors.tooManyRequests({
-      code: "CONCURRENT_SCAN_LIMIT_REACHED",
-      current: runningScanCount,
-      limit: concurrentLimit,
-      message: `Maximum ${concurrentLimit} concurrent scans allowed for ${userPlan} plan. Currently running: ${runningScanCount}`,
-      upgrade_url: "/dashboard/billing",
-    });
-  }
+    // Get profile
+    const profile = getProfile(normalizedScanType);
+    const enabledScanners = profile.enabledScanners;
 
-  // ✅ FIX: Use actual scan profiles with real differences
-  const profile = getProfile(normalizedScanType);
-  const enabledScanners = profile.enabledScanners;
-
-  // Create scan record
-  const { data: scan, error: scanError } = await fastify.supabase
-    .from("scans")
-    .insert({
+    // Create scan record
+    const scan = await this.repository.create({
       user_id: userId,
       workspace_id: workspaceId,
       repository_id: repositoryId,
@@ -87,350 +73,205 @@ export async function startScan(
       secrets_enabled: enabledScanners.secrets,
       iac_enabled: enabledScanners.iac,
       container_enabled: enabledScanners.container,
-    })
-    .select()
-    .single();
+    });
 
-  if (scanError || !scan) {
-    fastify.log.error({ scanError }, "Failed to create scan");
-    throw fastify.httpErrors.internalServerError("Failed to create scan");
-  }
+    // Track usage & enqueue
+    await entitlements.trackScanStart(workspaceId, scan.id);
 
-  //  Track usage IMMEDIATELY (before enqueue to avoid race)
-  await entitlements.trackScanStart(workspaceId, scan.id);
-  // Enqueue scan job
-  await fastify.jobQueue.enqueue("scans", "process-scan", {
-    scanId: scan.id,
-    repositoryId,
-    workspaceId,
-    branch,
-    scanType: normalizedScanType,
-    enabledScanners,
-  });
+    await this.fastify.jobQueue.enqueue("scans", "process-scan", {
+      scanId: scan.id,
+      repositoryId,
+      workspaceId,
+      branch,
+      scanType: normalizedScanType,
+      enabledScanners,
+    });
 
-  fastify.log.info({ scanId: scan.id }, "Scan job enqueued");
-
-  return {
-    scan_id: scan.id,
-    status: "pending",
-    message: "Scan initiated successfully",
-  };
-}
-
-export async function getScanLogs(
-  fastify: FastifyInstance,
-  workspaceId: string,
-  scanId: string
-): Promise<{
-  logs: Array<{
-    id: string;
-    timestamp: string;
-    level: string;
-    message: string;
-    details: any;
-  }>;
-}> {
-  // Verify scan belongs to user
-  const { data: scan } = await fastify.supabase
-    .from("scans")
-    .select("id")
-    .eq("id", scanId)
-    .eq("workspace_id", workspaceId)
-    .single();
-
-  if (!scan) {
-    throw fastify.httpErrors.notFound("Scan not found");
-  }
-
-  const { data: logs, error } = await fastify.supabase
-    .from("scan_logs")
-    .select("*")
-    .eq("scan_id", scanId)
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    fastify.log.error({ error, scanId }, "Failed to fetch scan logs");
-    throw fastify.httpErrors.internalServerError("Failed to fetch scan logs");
-  }
-
-  return { logs: logs || [] };
-}
-
-// Progress is tracked directly in the scans table via progress_percentage and progress_stage fields
-// No separate progress events table needed - frontend polls the scan detail endpoint
-
-export async function getScanHistory(
-  fastify: FastifyInstance,
-  workspaceId: string,
-  repositoryId: string,
-  page: number,
-  limit: number,
-  status?: string,
-  severity?: string
-): Promise<{
-  scans: ScanRun[];
-  total: number;
-  page: number;
-  pages: number;
-}> {
-  const offset = (page - 1) * limit;
-
-  // ✅ TRUST FIX: Build query with filters
-  let query = fastify.supabase
-    .from("scans")
-    .select("*", { count: "exact" })
-    .eq("workspace_id", workspaceId)
-    .eq("repository_id", repositoryId);
-
-  // Apply status filter
-  if (status) {
-    query = query.eq("status", status);
-  }
-
-  // Apply severity filter (scans with any vulnerabilities of that severity)
-  if (severity) {
-    switch (severity) {
-      case "critical":
-        query = query.gt("critical_count", 0);
-        break;
-      case "high":
-        query = query.gt("high_count", 0);
-        break;
-      case "medium":
-        query = query.gt("medium_count", 0);
-        break;
-      case "low":
-        query = query.gt("low_count", 0);
-        break;
-    }
-  }
-
-  const { data, error, count } = await query
-    .order("created_at", { ascending: false })
-    .range(offset, offset + limit - 1);
-
-  if (error) {
-    fastify.log.error({ error, repositoryId }, "Failed to fetch scan history");
-    throw fastify.httpErrors.internalServerError(
-      "Failed to fetch scan history"
-    );
-  }
-
-  return {
-    scans: (data as ScanRun[]) || [],
-    total: count || 0,
-    page,
-    pages: Math.ceil((count || 0) / limit),
-  };
-}
-
-export async function getScanStatus(
-  fastify: FastifyInstance,
-  workspaceId: string,
-  scanId: string
-): Promise<{
-  scan: ScanRun;
-  summary: {
-    total_issues: number;
-    by_type: {
-      sast: number;
-      sca: number;
-      secrets: number;
-      iac: number;
-      container: number;
-    };
-    by_severity: {
-      critical: number;
-      high: number;
-      medium: number;
-      low: number;
-      info: number;
-    };
-  };
-}> {
-  const { data: scan, error: scanError } = await fastify.supabase
-    .from("scans")
-    .select("*")
-    .eq("id", scanId)
-    .eq("workspace_id", workspaceId)
-    .single();
-
-  if (scanError || !scan) {
-    throw fastify.httpErrors.notFound("Scan not found");
-  }
-
-  // Count vulnerabilities by type
-  const [sastCount, scaCount, secretsCount, iacCount, containerCount] =
-    await Promise.all([
-      countVulnerabilities(fastify, scanId, "vulnerabilities_sast"),
-      countVulnerabilities(fastify, scanId, "vulnerabilities_sca"),
-      countVulnerabilities(fastify, scanId, "vulnerabilities_secrets"),
-      countVulnerabilities(fastify, scanId, "vulnerabilities_iac"),
-      countVulnerabilities(fastify, scanId, "vulnerabilities_container"),
-    ]);
-
-  const summary = {
-    total_issues: scan.vulnerabilities_found || 0,
-    by_type: {
-      sast: sastCount,
-      sca: scaCount,
-      secrets: secretsCount,
-      iac: iacCount,
-      container: containerCount,
-    },
-    by_severity: {
-      critical: scan.critical_count || 0,
-      high: scan.high_count || 0,
-      medium: scan.medium_count || 0,
-      low: scan.low_count || 0,
-      info: scan.info_count || 0,
-    },
-  };
-
-  return {
-    scan: scan as ScanRun,
-    summary,
-  };
-}
-
-export async function exportScanResults(
-  fastify: FastifyInstance,
-  workspaceId: string,
-  scanId: string,
-  format: "json" | "csv" | "pdf"
-): Promise<any> {
-  const { scan, summary } = await getScanStatus(fastify, workspaceId, scanId);
-  // Fetch all vulnerabilities
-  const [sast, sca, secrets, iac, container] = await Promise.all([
-    getVulnerabilitiesForExport(fastify, scanId, "vulnerabilities_sast"),
-    getVulnerabilitiesForExport(fastify, scanId, "vulnerabilities_sca"),
-    getVulnerabilitiesForExport(fastify, scanId, "vulnerabilities_secrets"),
-    getVulnerabilitiesForExport(fastify, scanId, "vulnerabilities_iac"),
-    getVulnerabilitiesForExport(fastify, scanId, "vulnerabilities_container"),
-  ]);
-
-  const allVulns = [...sast, ...sca, ...secrets, ...iac, ...container];
-
-  if (format === "json") {
     return {
-      scan: {
-        id: scan.id,
-        repository_id: scan.repository_id,
-        branch: scan.branch,
-        status: scan.status,
-        created_at: scan.created_at,
-        completed_at: scan.completed_at,
-      },
-      summary,
-      vulnerabilities: allVulns,
+      scan_id: scan.id,
+      status: "pending",
+      message: "Scan initiated successfully",
     };
   }
 
-  if (format === "csv") {
-    const csv = convertToCSV(allVulns);
-    return csv;
+  async getScans(workspaceId: string, filters: ScanFilters): Promise<PaginatedScansResponse> {
+    const { data, count } = await this.repository.findAll(workspaceId, filters);
+
+    const scans: ScanWithRepository[] = data.map((scan: any) => ({
+      ...scan,
+      repository: Array.isArray(scan.repositories)
+        ? scan.repositories[0]
+        : scan.repositories,
+    }));
+
+    return {
+      data: scans,
+      meta: {
+        current_page: filters.page,
+        per_page: filters.limit,
+        total: count,
+        total_pages: Math.ceil(count / filters.limit),
+        has_next: filters.page < Math.ceil(count / filters.limit),
+        has_prev: filters.page > 1,
+      },
+    };
   }
 
-  // PDF format would require additional library
-  throw fastify.httpErrors.notImplemented("PDF export not yet implemented");
-}
+  async getScanDetails(workspaceId: string, scanId: string): Promise<ScanDetail> {
+    const scan = await this.repository.findById(scanId, workspaceId);
+    if (!scan) {
+      throw this.fastify.httpErrors.notFound(`Scan not found. ID: ${scanId}`);
+    }
 
-export async function cancelScan(
-  fastify: FastifyInstance,
-  workspaceId: string,
-  scanId: string
-): Promise<{ success: boolean; message: string }> {
-  const { data: scan, error } = await fastify.supabase
-    .from("scans")
-    .select("status")
-    .eq("id", scanId)
-    .eq("workspace_id", workspaceId)
-    .single();
+    // Fetch instances and logs
+    const instances: any[] = await this.repository.getScanInstances(scanId).catch(() => []);
+    const logs = await this.repository.getScanLogs(scanId).catch(() => []);
 
-  if (error || !scan) {
-    throw fastify.httpErrors.notFound("Scan not found");
+    // Process Scanner Breakdown
+    const scannerBreakdown = {
+      sast: { findings: 0, status: scan.sast_enabled ? "completed" : "disabled" },
+      sca: { findings: 0, status: scan.sca_enabled ? "completed" : "disabled" },
+      secrets: { findings: 0, status: scan.secrets_enabled ? "completed" : "disabled" },
+      iac: { findings: 0, status: scan.iac_enabled ? "completed" : "disabled" },
+      container: { findings: 0, status: scan.container_enabled ? "completed" : "disabled" },
+    };
+
+    const countSet = new Set<string>();
+    instances.forEach((inst) => {
+      const vuln = inst.vulnerabilities_unified;
+      if (vuln && vuln.status === "open" && !countSet.has(vuln.id)) {
+        if (vuln.scanner_type in scannerBreakdown) {
+          scannerBreakdown[vuln.scanner_type as keyof typeof scannerBreakdown].findings++;
+          countSet.add(vuln.id);
+        }
+      }
+    });
+
+    // Process Top Vulnerabilities
+    const vulnerabilityMap = new Map<string, any>();
+    instances.forEach((inst) => {
+      const vuln = inst.vulnerabilities_unified;
+      if (!vuln || vuln.status !== "open") return;
+
+      if (!vulnerabilityMap.has(vuln.id)) {
+        vulnerabilityMap.set(vuln.id, { ...vuln, instance_count: 0, instances: [] });
+      }
+      const v = vulnerabilityMap.get(vuln.id);
+      v.instance_count++;
+      v.instances.push({
+        id: inst.id,
+        file_path: inst.file_path || vuln.file_path,
+        line_start: inst.line_start || vuln.line_start,
+        package_name: inst.package_name,
+        package_version: inst.package_version,
+      });
+    });
+
+    const uniqueVulns = Array.from(vulnerabilityMap.values());
+    const severityOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+
+    uniqueVulns.sort((a, b) => {
+      const aSev = severityOrder[a.severity as keyof typeof severityOrder] ?? 5;
+      const bSev = severityOrder[b.severity as keyof typeof severityOrder] ?? 5;
+      if (aSev !== bSev) return aSev - bSev;
+      return (b.confidence || 0) - (a.confidence || 0);
+    });
+
+    return {
+      ...scan,
+      repository: Array.isArray(scan.repositories) ? scan.repositories[0] : scan.repositories,
+      scanner_breakdown: scannerBreakdown,
+      logs: logs,
+      top_vulnerabilities: uniqueVulns.slice(0, 5),
+    };
   }
 
-  if (scan.status === "completed" || scan.status === "failed") {
-    throw fastify.httpErrors.badRequest(
-      "Cannot cancel completed or failed scan"
-    );
+  async getScanStats(workspaceId: string) {
+    // This could also be moved to Repository if we want precise counting
+    // For now, fetching all status is okay but inefficient for huge tables
+    // Optimally: Repo should have countByStatus method
+    const { data: scans } = await this.fastify.supabase
+      .from("scans")
+      .select("status")
+      .eq("workspace_id", workspaceId);
+
+    return {
+      total: scans?.length || 0,
+      running: scans?.filter((s) => s.status === "running").length || 0,
+      completed: scans?.filter((s) => s.status === "completed").length || 0,
+      failed: scans?.filter((s) => s.status === "failed").length || 0,
+    };
   }
 
-  await fastify.supabase
-    .from("scans")
-    .update({ status: "cancelled", completed_at: new Date().toISOString() })
-    .eq("id", scanId);
+  async cancelScan(workspaceId: string, scanId: string): Promise<{ success: boolean; message: string }> {
+    const scan = await this.repository.findById(scanId, workspaceId);
+    if (!scan) throw this.fastify.httpErrors.notFound("Scan not found");
 
-  return {
-    success: true,
-    message: "Scan cancelled successfully",
-  };
-}
+    if (scan.status === "completed" || scan.status === "failed") {
+      throw this.fastify.httpErrors.badRequest("Cannot cancel completed or failed scan");
+    }
 
-async function countVulnerabilities(
-  fastify: FastifyInstance,
-  scanId: string,
-  table: string
-): Promise<number> {
-  const { count } = await fastify.supabase
-    .from(table)
-    .select("id", { count: "exact", head: true })
-    .eq("scan_id", scanId);
+    await this.repository.updateStatus(scanId, workspaceId, "cancelled", {
+      completed_at: new Date().toISOString()
+    });
 
-  return count || 0;
-}
+    return { success: true, message: "Scan cancelled successfully" };
+  }
 
-async function getVulnerabilitiesForExport(
-  fastify: FastifyInstance,
-  scanId: string,
-  table: string
-): Promise<any[]> {
-  const { data } = await fastify.supabase
-    .from(table)
-    .select("*")
-    .eq("scan_id", scanId);
+  async exportScanResults(
+    workspaceId: string,
+    scanId: string,
+    format: "json" | "csv"
+  ): Promise<any> {
+    const details = await this.getScanDetails(workspaceId, scanId);
+    const instances = await this.repository.getScanInstances(scanId);
 
-  return data || [];
-}
+    const flatVulns = instances.map((inst) => ({
+      ...inst.vulnerabilities_unified,
+      file_path: inst.file_path,
+      line_start: inst.line_start,
+      detected_at: inst.detected_at, // assuming this exists in instances or vuln
+    }));
 
-function convertToCSV(vulnerabilities: any[]): string {
-  if (vulnerabilities.length === 0) return "";
+    if (format === "json") {
+      return {
+        scan: details,
+        vulnerabilities: flatVulns,
+      };
+    }
 
-  const headers = [
-    "Severity",
-    "Type",
-    "Title",
-    "File",
-    "Line",
-    "Status",
-    "Detected At",
-  ];
+    if (format === "csv") {
+      return this.convertToCSV(flatVulns);
+    }
+    
+    throw this.fastify.httpErrors.badRequest("Invalid format");
+  }
 
-  const rows = vulnerabilities.map((v) => [
-    v.severity,
-    v.type,
-    v.title,
-    v.file_path || v.file || "",
-    v.line_start || v.line || "",
-    v.status,
-    new Date(v.detected_at).toISOString(),
-  ]);
+  private convertToCSV(vulnerabilities: any[]): string {
+    if (vulnerabilities.length === 0) return "";
+    const headers = ["Severity", "Type", "Title", "File", "Line", "Status", "Detected At"];
+    const rows = vulnerabilities.map((v) => [
+      v.severity,
+      v.scanner_type,
+      v.title,
+      v.file_path || "",
+      v.line_start || "",
+      v.status,
+      v.detected_at ? new Date(v.detected_at).toISOString() : "",
+    ]);
+    return [
+      headers.join(","),
+      ...rows.map((row) => row.map((cell) => `"${cell || ""}"`).join(",")),
+    ].join("\n");
+  }
 
-  const csv = [
-    headers.join(","),
-    ...rows.map((row) => row.map((cell) => `"${cell}"`).join(",")),
-  ].join("\n");
-
-  return csv;
-}
-
-function getConcurrentScanLimit(plan: string): number {
-  const limits: Record<string, number> = {
-    Free: 5,
-    Dev: 3,
-    Team: 20,
-    Enterprise: 50,
-  };
-  return limits[plan] || 1;
+  private getConcurrentScanLimit(plan: string): number {
+    const limits: Record<string, number> = {
+      Free: 3,
+      Dev: 5,
+      Team: 10,
+      Enterprise: 50,
+    };
+    return limits[plan] || 1;
+  }
 }

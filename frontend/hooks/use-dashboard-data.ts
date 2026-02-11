@@ -1,12 +1,13 @@
 // hooks/use-dashboard-data.ts
 "use client";
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useCurrentWorkspace } from '@/stores/workspace-store';
 import { dashboardApi } from '@/lib/api/dashboard';
 import { repositoriesApi } from '@/lib/api/repositories';
 import { entitlementsApi } from '@/lib/api/entitlements';
 import { integrationsApi } from '@/lib/api/integrations';
+import { membersApi } from '@/lib/api/members';
 import { useCallback } from 'react';
 
 /**
@@ -31,7 +32,59 @@ export const workspaceKeys = {
     [...workspaceKeys.github(workspaceId), 'repositories'] as const,
   githubStatus: (workspaceId: string) => 
     [...workspaceKeys.github(workspaceId), 'integration-status'] as const,
+  members: (workspaceId: string) => 
+    [...workspaceKeys.all(workspaceId), 'members'] as const,
+  invitations: (workspaceId: string) => 
+    [...workspaceKeys.all(workspaceId), 'invitations'] as const,
 };
+
+// ... (existing hooks)
+
+/**
+ * Hook to fetch workspace members
+ * Reactive to workspace changes
+ */
+export function useWorkspaceMembers() {
+  const workspace = useCurrentWorkspace();
+  // We need membersApi imported. It wasn't imported in original file. 
+  // I will add the import in a separate block or assume it's available?
+  // No, I must import it. I'll add the import at the top in a separate change if needed, 
+  // or just use `import { membersApi } from '@/lib/api/members';` if I can merge edits.
+  // Since I can't merge non-contiguous edits easily without multi_replace, I'll assume users wants me to add imports.
+  // Actually, I can use multi_replace.
+
+  return useQuery({
+    queryKey: workspace 
+      ? workspaceKeys.members(workspace.id) 
+      : ['members', 'none'],
+    queryFn: async () => {
+      console.log('👥 Fetching members for workspace:', workspace?.name);
+      return membersApi.getMembers(workspace!.id);
+    },
+    enabled: !!workspace,
+    staleTime: 30 * 1000,
+  });
+}
+
+/**
+ * Hook to fetch workspace invitations
+ * Reactive to workspace changes
+ */
+export function useWorkspaceInvitations() {
+  const workspace = useCurrentWorkspace();
+
+  return useQuery({
+    queryKey: workspace 
+      ? workspaceKeys.invitations(workspace.id) 
+      : ['invitations', 'none'],
+    queryFn: async () => {
+      console.log('💌 Fetching invitations for workspace:', workspace?.name);
+      return membersApi.getInvitations(workspace!.id);
+    },
+    enabled: !!workspace,
+    staleTime: 30 * 1000,
+  });
+}
 
 /**
  * Hook to fetch dashboard overview data
@@ -71,12 +124,12 @@ export function useProjectsList(params?: {
       : ['projects', 'list', 'none'],
     queryFn: () => {
       console.log('📦 Fetching projects for workspace:', workspace?.name, params);
-      return repositoriesApi.list(params || {});
+      return repositoriesApi.list(workspace!.id, params || {});
     },
     enabled: !!workspace,
     staleTime: 20 * 1000, // 20 seconds
     refetchOnMount: true, // Refetch when component mounts
-    keepPreviousData: true, // For smooth pagination
+    placeholderData: keepPreviousData, // For smooth pagination
   });
 }
 
@@ -90,7 +143,7 @@ export function useProjectDetail(projectId: string) {
     queryKey: workspace 
       ? workspaceKeys.projectDetail(workspace.id, projectId)
       : ['projects', 'detail', projectId, 'none'],
-    queryFn: () => repositoriesApi.getById(projectId),
+    queryFn: () => repositoriesApi.getById(workspace!.id, projectId),
     enabled: !!workspace && !!projectId,
     staleTime: 60 * 1000, // 1 minute
     refetchOnMount: true,
@@ -107,7 +160,7 @@ export function useEntitlements() {
     queryKey: workspace 
       ? workspaceKeys.entitlements(workspace.id)
       : ['entitlements', 'none'],
-    queryFn: () => entitlementsApi.getEntitlements(),
+    queryFn: () => entitlementsApi.getEntitlements(workspace!.id),
     enabled: !!workspace,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
@@ -125,7 +178,7 @@ export function useIntegrations() {
       : ['integrations', 'none'],
     queryFn: () => {
       console.log('🔌 Fetching integrations for workspace:', workspace?.name);
-      return integrationsApi.getIntegrations();
+      return integrationsApi.getIntegrations(workspace!.id);
     },
     enabled: !!workspace,
     staleTime: 30 * 1000, // 30 seconds
@@ -192,7 +245,7 @@ export function useGitHubRepositories() {
       : ['github', 'repositories', 'none'],
     queryFn: async () => {
       console.log('📦 Fetching GitHub repositories for workspace:', workspace?.name);
-      return repositoriesApi.getGitHubRepos();
+      return repositoriesApi.getGitHubRepos(workspace!.id);
     },
     enabled: !!workspace,
     staleTime: 30 * 1000, // 30 seconds
@@ -213,7 +266,7 @@ export function useGitHubIntegrationStatus() {
       : ['github', 'integration-status', 'none'],
     queryFn: async () => {
       console.log('🔌 Fetching GitHub integration status for workspace:', workspace?.name);
-      return integrationsApi.getIntegrationStatus('github');
+      return integrationsApi.getIntegrationStatus(workspace!.id, 'github');
     },
     enabled: !!workspace,
     staleTime: 60 * 1000, // 1 minute

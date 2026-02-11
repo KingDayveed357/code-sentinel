@@ -17,6 +17,7 @@ interface ScanLog {
 
 interface ScanLogsWithProgressProps {
   scanId: string;
+  workspaceId: string;
   isRunning?: boolean;
 }
 
@@ -24,7 +25,7 @@ interface ScanLogsWithProgressProps {
  * ✅ Enhanced scan logs component with progress bar and percentage
  * Shows real-time progress and logs for active scans
  */
-export function ScanLogsWithProgress({ scanId, isRunning = false }: ScanLogsWithProgressProps) {
+export function ScanLogsWithProgress({ scanId, workspaceId, isRunning = false }: ScanLogsWithProgressProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [logs, setLogs] = useState<ScanLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,7 +37,7 @@ export function ScanLogsWithProgress({ scanId, isRunning = false }: ScanLogsWith
 
     const fetchLogs = async () => {
       try {
-        const data = await scansApi.getLogs(scanId);
+        const data = await scansApi.getLogs(workspaceId, scanId);
         setLogs(data.logs || []);
         setLoading(false);
       } catch (err) {
@@ -56,7 +57,7 @@ export function ScanLogsWithProgress({ scanId, isRunning = false }: ScanLogsWith
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [scanId, isRunning]);
+  }, [scanId, workspaceId, isRunning]);
 
   // Auto-scroll to bottom when logs update
   useEffect(() => {
