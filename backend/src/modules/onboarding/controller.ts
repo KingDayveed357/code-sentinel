@@ -54,13 +54,11 @@ export async function saveRepositoriesController(
     reply: FastifyReply
 ) {
     const workspaceId = request.workspace!.id;
-    const userPlan = request.profile!.plan;
     const { repositories, provider } = saveRepositoriesSchema.parse(request.body);
 
     const result = await service.saveRepositories(
         request.server,
         workspaceId,
-        userPlan,
         repositories,
         provider
     );

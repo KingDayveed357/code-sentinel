@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useTransition } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
+import { useProgressRouter as useRouter } from '@/hooks/use-progress-router';
 import { useWorkspace } from '@/hooks/use-workspace';
 import { classifyRoute } from '@/lib/routes/route-classifier';
 import { useQueryClient } from '@tanstack/react-query';
-import { useToast } from '@/hooks/use-toast';
-import { Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { AnimatePresence, motion } from 'framer-motion';
 
@@ -24,61 +24,101 @@ export function WorkspaceRouteGuard({ children }: { children: React.ReactNode })
   const router = useRouter();
   const { workspace, isSwitching, initializing } = useWorkspace();
   const queryClient = useQueryClient();
-  const { toast } = useToast();
+  
+  // Track the last active workspace ID to detect switches
+  const [lastWorkspaceId, setLastWorkspaceId] = useState<string | null>(null);
   
   // Local validation state
   const [isValidating, setIsValidating] = useState(false);
   
-  // Use transition for smoother navigation
-  const [isPending, startTransition] = useTransition();
+  // Detect if we are in a "post-switch" mismatched state before effect runs
+  // This prevents flashing "old route + new workspace" content
+  const isWorkspaceMismatch = lastWorkspaceId !== null && workspace?.id && lastWorkspaceId !== workspace.id;
 
   // Combined loading state
-  const isLoading = initializing || isSwitching || isValidating || isPending;
+  const isLoading = initializing || isSwitching || isValidating || isWorkspaceMismatch;
 
   useEffect(() => {
-    // Skip logical checks if purely initializing
-    if (!workspace) return;
+    // 1. Guard clauses
+    if (!workspace || initializing || isSwitching) return;
 
+    const currentWsId = workspace.id;
     const route = classifyRoute(pathname);
 
-    // If route is workspace-safe, no checks needed
-    if (route.type === 'workspace-safe') return;
+    // 2. Initialize tracker on first load
+    if (lastWorkspaceId === null) {
+        setLastWorkspaceId(currentWsId);
+        // Fall through to validation (needed for deep links)
+    }
+    // 3. Detect Workspace Switch
+    else if (lastWorkspaceId !== currentWsId) {
+        // Workspace changed!
+        
+        if (route.type === 'entity-dependent') {
+             const redirectPath = route.redirectOnInvalid || '/dashboard';
+             
+             // CRITICAL: Immediate Redirect - Do not validate
+             router.replace(redirectPath);
+             
+             toast.warning("Workspace changed", {
+                 description: "The resource you were viewing belongs to a different workspace. You’ve been redirected.",
+                 duration: 4000,
+             });
+             
+             // Determine we are redirecting, so stop here
+             return;
+        } else {
+             // For safe routes, just accept the new workspace
+             setLastWorkspaceId(currentWsId);
+             // We can proceed to let standard validation logic run (or skip) below
+             // but usually safe routes don't 'requireValidation'.
+        }
+    }
 
-    // Entity-dependent routes require async validation to ensure the resource belongs to the workspace
-    if (route.type === 'entity-dependent' && route.requiresValidation) {
-       setIsValidating(true);
-       
-       const validate = async () => {
-         try {
-           const isValid = await route.requiresValidation!(pathname, workspace, queryClient);
+    // 4. Standard Validation Logic
+    // (Runs on deep link OR stable navigation within workspace)
+    
+    // Explicitly turn OFF validation if route is safe
+    if (route.type !== 'entity-dependent' || !route.requiresValidation) {
+      setIsValidating(false);
+      return;
+    }
+
+    // Start validation for entity routes
+    let active = true;
+    setIsValidating(true);
+
+    const validate = async () => {
+      try {
+        const isValid = await route.requiresValidation!(pathname, workspace, queryClient);
+        
+        if (!active) return; 
+
+        if (!isValid) {
+           const redirectPath = route.redirectOnInvalid || '/dashboard';
            
-           if (!isValid) {
-              console.warn(`Redirecting from ${pathname} - resource not found in workspace ${workspace.id}`);
-              
-              const redirectPath = route.redirectOnInvalid || '/dashboard';
-              
-              // Use transition for redirect
-              startTransition(() => {
-                router.push(redirectPath);
-              });
-              
-              toast({
-                title: "Resource not available",
-                description: "This resource doesn't exist in the current workspace.",
-                variant: 'destructive',
-              });
-           }
-         } catch (err: any) {
-            console.error("Route validation error:", err);
-            // Optional: Show error toast?
-         } finally {
+           router.replace(redirectPath);
+           
+           toast.error('Access Denied', {
+             description: 'You do not have permission to view this resource.',
+             duration: 4000,
+           });
+        }
+      } catch (err: any) {
+         console.error("Route validation error:", err);
+      } finally {
+         if (active) {
             setIsValidating(false);
          }
-       };
+      }
+    };
 
-       validate();
-    }
-  }, [pathname, workspace?.id, queryClient, router, toast]);
+    validate();
+
+    return () => {
+      active = false;
+    };
+  }, [pathname, workspace?.id, isSwitching, initializing, queryClient, router, lastWorkspaceId]);
 
   return (
     <div className="relative min-h-[calc(100vh-4rem)]">
@@ -96,33 +136,25 @@ export function WorkspaceRouteGuard({ children }: { children: React.ReactNode })
 
       {/* 
         ✅ PROGRESSIVE LOADING OVERLAY
-        Only visible when significant work is happening.
-        Uses AnimatePresence for smooth entry/exit.
+        Minimalist, premium loader only. No raw text.
+        Centered, smooth entry/exit.
       */}
-      <AnimatePresence>
+      <AnimatePresence mode="wait">
         {isLoading && (
           <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
             className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
           >
-            <div className="bg-background/80 backdrop-blur-md border border-border/50 shadow-2xl rounded-xl px-8 py-6 flex flex-col items-center gap-4 max-w-sm mx-auto pointer-events-auto">
-              {/* Premium Gradient Loader */}
-              <div className="relative flex items-center justify-center h-16 w-16">
+            {/* Glassmorphism Card - Icon Only */}
+            <div className="bg-background/40 backdrop-blur-xl border border-border/20 shadow-2xl rounded-2xl p-6 flex items-center justify-center pointer-events-auto">
+              <div className="relative flex items-center justify-center h-12 w-12">
                 <div className="absolute inset-0 rounded-full border-4 border-primary/20" />
-                <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-primary animate-spin" />
-                <Loader2 className="h-6 w-6 text-primary animate-pulse" />
-              </div>
-              
-              <div className="text-center space-y-1">
-                <h3 className="font-semibold text-lg tracking-tight">
-                  {isSwitching ? 'Switching Workspace' : isValidating ? 'Verifying Access' : 'Loading'}
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  {isSwitching ? 'Syncing your environment...' : 'Checking permissions...'}
-                </p>
+                <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-primary animate-spin duration-700" />
+                {/* Brand dot in center */}
+                <div className="h-2 w-2 bg-primary rounded-full animate-pulse" />
               </div>
             </div>
           </motion.div>

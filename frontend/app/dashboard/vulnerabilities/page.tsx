@@ -24,7 +24,8 @@
 
 import React, { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useProgressRouter as useRouter } from "@/hooks/use-progress-router";
+import { useSearchParams } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

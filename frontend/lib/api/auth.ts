@@ -6,8 +6,12 @@ export const authApi = {
   /**
    * GitHub OAuth sign in - returns redirect URL
    */
-  githubOAuth: async (): Promise<{ url: string }> => {
-    return apiFetch("/auth/oauth/github", {
+  githubOAuth: async (inviteToken?: string): Promise<{ url: string }> => {
+    const endpoint = inviteToken 
+      ? `/auth/oauth/github?invite_token=${inviteToken}`
+      : "/auth/oauth/github";
+      
+    return apiFetch(endpoint, {
       method: "POST",
       body: JSON.stringify({}),
     });

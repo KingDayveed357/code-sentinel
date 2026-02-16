@@ -84,7 +84,11 @@ export interface Workspace {
   type: WorkspaceType;
   owner_id: string;
   plan: WorkspacePlan;
+  billing_status: 'none' | 'pending' | 'active' | 'expired';
+  subscription_provider?: string;
+  subscription_id?: string;
   settings: Record<string, any>;
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -131,12 +135,23 @@ export interface WorkspaceActivity {
   resource_id: string;
   metadata: Record<string, any>;
   created_at: string;
+  actor?: {
+    email: string;
+    full_name: string | null;
+    avatar_url: string | null;
+  };
 }
 
 export interface CreateWorkspaceData {
   name: string;
   type: WorkspaceType;
   plan?: WorkspacePlan;
+}
+
+export interface CreateWorkspaceResponse {
+  workspace: Workspace; // Always returned for personal or if active immediately
+  checkoutUrl?: string; // If 'team' and pending
+  action?: 'redirect_to_checkout';
 }
 
 export interface UpdateWorkspaceData {
@@ -269,7 +284,7 @@ export async function getWorkspace(workspaceId: string): Promise<WorkspaceWithRo
 /**
  * Create a new workspace
  */
-export async function createWorkspace(data: CreateWorkspaceData): Promise<Workspace> {
+export async function createWorkspace(data: CreateWorkspaceData): Promise<CreateWorkspaceResponse> {
   return apiFetch('/workspaces', {
     method: 'POST',
     body: JSON.stringify(data),
@@ -366,6 +381,20 @@ export async function inviteMember(
   });
 }
 
+
+
+/**
+ * Preview workspace invitation
+ */
+export async function previewInvitation(token: string): Promise<WorkspaceInvitation & { workspace: { name: string, slug: string }, inviter: { full_name: string, email: string } }> {
+  // Public route, but we can use apiFetch with requireAuth: false if needed, 
+  // but apiFetch defaults to sending token if available. 
+  // We'll trust the backend ignores auth for public route if not provided.
+  return apiFetch(`/workspaces/invitations/${token}/preview`, {
+    requireAuth: false, 
+  });
+}
+
 /**
  * Accept workspace invitation
  */
@@ -419,6 +448,19 @@ export async function getActivity(
  */
 export async function bootstrapWorkspace(): Promise<{ workspace: Workspace }> {
   return apiFetch('/workspaces/bootstrap', {
+    method: 'POST',
+    requireAuth: true,
+  });
+}
+
+/**
+ * Initiate checkout for a workspace
+ */
+export async function initiateCheckout(workspaceId: string): Promise<{
+  checkoutUrl: string;
+  action: 'redirect_to_checkout';
+}> {
+  return apiFetch(`/workspaces/${workspaceId}/checkout`, {
     method: 'POST',
     requireAuth: true,
   });

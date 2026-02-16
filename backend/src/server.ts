@@ -20,6 +20,7 @@ import githubIssuesRoutes from './modules/github-issues/routes';
 import webhooksRoutes from './modules/webhook/route';
 import entitlementsRoutes from './modules/entitlements/routes';
 import workspacesRoutes from './modules/workspaces/routes';
+import billingRoutes from './modules/billing/routes';
 
 // Workers
 import { processScanJob } from './modules/scans';
@@ -104,7 +105,14 @@ export function buildServer() {
       );
     }, 5 * 60 * 1000);
     
+
+    
     app.log.info('✅ Stalled scan detector started (runs every 5 minutes)');
+
+    // Start workspace cleanup job
+    const { scheduleWorkspaceCleanup } = await import('./jobs/cleanup-workspaces');
+    scheduleWorkspaceCleanup(app);
+    app.log.info('🧹 Workspace cleanup job started (runs every 1 hour)');
   });
 
   // Health check
@@ -139,6 +147,9 @@ export function buildServer() {
   app.register(webhooksRoutes, { prefix: '/api/webhooks' });
   // app.register(entitlementsRoutes, { prefix: '/api/me' });
   app.register(workspacesRoutes, { prefix: '/api/workspaces' });
+
+  // Load billing routes (dev mode mock + webhooks)
+  app.register(billingRoutes, { prefix: '/api/billing' });
 
 
   // Global error handler

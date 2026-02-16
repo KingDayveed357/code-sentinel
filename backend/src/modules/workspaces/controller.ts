@@ -4,6 +4,7 @@
 // =====================================================
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { WorkspaceService } from './service';
+import { BillingService } from '../billing/service';
 import type { WorkspaceRole } from './types';
 
 interface CreateWorkspaceBody {
@@ -31,7 +32,11 @@ interface AcceptInvitationParams {
 }
 
 export class WorkspaceController {
-  constructor(private service: WorkspaceService) {}
+  private billingService: BillingService;
+
+  constructor(private service: WorkspaceService) {
+    this.billingService = new BillingService(service.fastify);
+  }
 
   async listWorkspaces(req: FastifyRequest, reply: FastifyReply) {
     const userId = req.user!.id;
@@ -51,8 +56,48 @@ export class WorkspaceController {
     reply: FastifyReply
   ) {
     const userId = req.user!.id;
+    const { name, type, plan } = req.body;
+
+    // Check for existing pending workspace if creating a team workspace
+    if (type === 'team') {
+      const pendingWorkspace = await this.service.hasPendingWorkspace(userId);
+      if (pendingWorkspace) {
+        // Return existing pending workspace with checkout URL (re-create session or return instructions)
+        // For simplicity, we block creation and ask user to complete previous one or wait for cleanup.
+        // Or we could redirect them to the existing one.
+        // Requirement: "Only allow ONE pending workspace per user."
+        throw req.server.httpErrors.conflict('You already have a pending team workspace. Please complete the setup or wait for it to expire.');
+      }
+    }
+
     const workspace = await this.service.createWorkspace(userId, req.body);
-    return reply.status(201).send(workspace);
+
+    if (type === 'team') {
+      // Step 2: Call PaymentProvider.createCheckoutSession
+      try {
+        // We need user email for checkout
+        const { email } = req.user! as any; // Assuming user object has email
+        const checkoutSession = await this.billingService.createCheckoutSession(workspace.id, email);
+        
+        // Step 4: User redirected to onboarding (instruction says "User redirected to onboarding" after success)
+        // Using "Step 2: System calls PaymentProvider.createCheckoutSession(workspaceId)"
+        // "Step 3: On success: Provider activates workspace" - this likely happens via webhook or immediate in dev.
+        // The controller should return the checkout URL so frontend can redirect.
+        
+        return reply.status(201).send({
+          workspace,
+          checkoutUrl: checkoutSession.url,
+          action: 'redirect_to_checkout'
+        });
+      } catch (error) {
+        req.log.error({ error, workspaceId: workspace.id }, 'Failed to create checkout session');
+        // Delete the pending workspace if checkout creation fails to avoid ghost pending state? 
+        // Or just leave it for cleanup job. Leave it for cleanup.
+        throw req.server.httpErrors.internalServerError('Failed to initiate billing session');
+      }
+    }
+
+    return reply.status(201).send({ workspace });
   }
 
   async updateWorkspace(
@@ -108,6 +153,16 @@ export class WorkspaceController {
       userId
     );
     return reply.status(201).send(invitation);
+  }
+
+
+  async previewInvitation(
+    req: FastifyRequest<{ Params: { token: string } }>,
+    reply: FastifyReply
+  ) {
+    const { token } = req.params;
+    const result = await this.service.previewInvitation(token);
+    return reply.send(result);
   }
 
   async acceptInvitation(
@@ -187,5 +242,38 @@ export class WorkspaceController {
     const userId = req.user!.id;
     await this.service.cancelInvitation(workspaceId, invitationId, userId);
     return reply.status(204).send();
+  }
+
+  async initiateCheckout(
+    req: FastifyRequest<{ Params: { workspaceId: string } }>,
+    reply: FastifyReply
+  ) {
+    const { workspaceId } = req.params;
+    const userId = req.user!.id;
+
+    // Verify workspace access and status
+    const workspace = await this.service.getWorkspaceWithRole(workspaceId, userId);
+
+    if (workspace.role !== 'owner') {
+      throw req.server.httpErrors.forbidden('Only workspace owner can initiate checkout');
+    }
+
+    if (workspace.billing_status === 'active') {
+      throw req.server.httpErrors.conflict('Workspace is already active');
+    }
+
+    // Create checkout session
+    try {
+      const { email } = req.user! as any;
+      const checkoutSession = await this.billingService.createCheckoutSession(workspaceId, email);
+      
+      return reply.send({
+        checkoutUrl: checkoutSession.url,
+        action: 'redirect_to_checkout'
+      });
+    } catch (error) {
+       req.log.error({ error, workspaceId }, 'Failed to create checkout session');
+       throw req.server.httpErrors.internalServerError('Failed to initiate billing session');
+    }
   }
 }

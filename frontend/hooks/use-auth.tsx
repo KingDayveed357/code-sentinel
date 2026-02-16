@@ -32,9 +32,10 @@ interface AuthContextValue {
   session: Session | null;
   loading: boolean;
   profileLoading: boolean;
-  githubSignIn: () => Promise<void>;
+  githubSignIn: (inviteToken?: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  refreshWorkspaces: () => Promise<void>;
   isOnboardingComplete: boolean;
   userPlan: string;
   canAccessTeam: boolean;
@@ -67,10 +68,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!maybeUser) return null;
       return maybeUser as AuthUser;
     } catch (err) {
-      console.error("fetchUserProfile error:", err);
+      // console.error("fetchUserProfile error:", err);
       return null;
     }
   }, []);
+
+  // Fetch and initialize workspaces
+  const fetchAndInitWorkspaces = useCallback(async (force = false) => {
+    if (!mountedRef.current) return;
+    setInitializing(true);
+    
+    try {
+      // 1. Fetch all accessible workspaces first
+      const allWorkspaces = await listWorkspaces();
+      setWorkspaces(allWorkspaces);
+
+      // 2. Determine target workspace ID from URL or LocalStorage
+      let targetWorkspaceId: string | null = null;
+      if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search);
+          targetWorkspaceId = params.get('workspace') || localStorage.getItem('active_workspace_id');
+      }
+
+      // 3. Find the target workspace in our list
+      let activeWorkspace = allWorkspaces.find(w => w.id === targetWorkspaceId);
+
+      // 4. If not found (or no target), fall back to bootstrap/personal
+      if (!activeWorkspace) {
+          // console.log('⚠️ Target workspace not found, bootstrapping personal...');
+          const { workspace: bootstrapped } = await bootstrapWorkspace();
+          activeWorkspace = bootstrapped;
+          
+          // Ensure bootstrapped workspace is in our list
+          if (!allWorkspaces.find(w => w.id === activeWorkspace.id)) {
+            setWorkspaces([...allWorkspaces, activeWorkspace]);
+          }
+      }
+
+      if (activeWorkspace) {
+          // console.log('✅ Setting active workspace:', activeWorkspace.name);
+          setWorkspace(activeWorkspace);
+          setWorkspaceInStore(activeWorkspace);
+          if (typeof window !== 'undefined') {
+              localStorage.setItem('active_workspace_id', activeWorkspace.id);
+          }
+      }
+
+    } catch (error) {
+      console.error('❌ Workspace initialization failed:', error);
+    } finally {
+      if (mountedRef.current) {
+        setInitializing(false);
+      }
+    }
+  }, [setWorkspaceInStore, setWorkspaces, setInitializing]);
 
   // Refresh user public method
   const refreshUser = useCallback(async () => {
@@ -91,13 +142,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [fetchUserProfile]);
 
   // GitHub OAuth Sign In
-  const githubSignIn = useCallback(async () => {
+  const githubSignIn = useCallback(async (inviteToken?: string) => {
     try {
       isNavigatingRef.current = true;
-      const { url } = await authApi.githubOAuth();
+      const { url } = await authApi.githubOAuth(inviteToken);
       window.location.href = url;
     } catch (err) {
-      console.error("GitHub OAuth error:", err);
+      // console.error("GitHub OAuth error:", err);
       isNavigatingRef.current = false;
       throw err;
     }
@@ -112,7 +163,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await supabase.auth.signOut();
       router.replace("/");
     } catch (err) {
-      console.error("logout error:", err);
+      // console.error("logout error:", err);
       router.replace("/");
     } finally {
       isNavigatingRef.current = false;
@@ -140,57 +191,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfileLoading(true);
 
         // Step 1: Fetch user profile
-        console.log('🔐 Fetching user profile...');
+        // console.log('🔐 Fetching user profile...');
         const profile = await fetchUserProfile(session.access_token);
         if (!mountedRef.current) return;
         if (profile) {
-          console.log('✅ User profile loaded:', profile.email);
+          // console.log('✅ User profile loaded:', profile.email);
           setUser(profile);
-        } else {
-          console.error('❌ Failed to load user profile');
-        }
-
-        // Step 2: Bootstrap workspace
-        // ✅ CRITICAL: Backend middleware now handles:
-        //   - Creating workspace if it doesn't exist
-        //   - Creating GitHub integration if user has OAuth token
-        //   - Race condition prevention
-        // Frontend just calls one endpoint and everything is ready!
-        console.log('🏢 Bootstrapping workspace...');
-        try {
-          const { workspace: activeWorkspace } = await bootstrapWorkspace();
-          if (!mountedRef.current) return;
-          if (activeWorkspace) {
-            console.log('✅ Workspace bootstrapped:', activeWorkspace.name, activeWorkspace.id);
-            setWorkspace(activeWorkspace); // Local state for auth context
-            setWorkspaceInStore(activeWorkspace); // Store in centralized store
-            localStorage.setItem('active_workspace_id', activeWorkspace.id);
-            
-            // Fetch all workspaces for switcher
-            console.log('📋 Fetching all workspaces...');
-            const allWorkspaces = await listWorkspaces();
-            setWorkspaces(allWorkspaces);
-            console.log('✅ Loaded', allWorkspaces.length, 'workspaces');
-          } else {
-            console.error('❌ Bootstrap returned no workspace');
-          }
-        } catch (bootstrapError) {
-          console.error('❌ Workspace bootstrap failed:', bootstrapError);
-          // Don't throw - allow user to continue without workspace
-          // They can create one manually if needed
-        } finally {
-          setInitializing(false);
-        }
+        } 
+        
+        // Step 2: Initialize Workspace using reusable function
+        await fetchAndInitWorkspaces();
 
         // Step 3: Clean up OAuth token from URL (if present)
-        // This happens AFTER bootstrap, which already handled integration creation
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('code') || urlParams.has('access_token')) {
           window.history.replaceState({}, document.title, window.location.pathname);
         }
 
       } catch (err) {
-        console.error('❌ Auth init error:', err);
+        // console.error('❌ Auth init error:', err);
         if (mountedRef.current) {
           setUser(null);
           setWorkspace(null);
@@ -223,8 +242,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfileLoading(true);
         const profile = await fetchUserProfile(newSession.access_token);
         if (!mountedRef.current) return;
+        
         if (profile) setUser(profile);
         setProfileLoading(false);
+
+        // Important: Re-fetch workspaces on session change (e.g. login)
+        await fetchAndInitWorkspaces();
       }, 300);
     });
 
@@ -233,7 +256,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       data?.subscription?.unsubscribe();
       if (profileFetchTimerRef.current) clearTimeout(profileFetchTimerRef.current);
     };
-  }, [fetchUserProfile]);
+  }, [fetchUserProfile, fetchAndInitWorkspaces]);
 
   const isOnboardingComplete = useMemo(
     () => !!user?.onboarding_completed,
@@ -257,6 +280,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       githubSignIn,
       logout,
       refreshUser,
+      refreshWorkspaces: fetchAndInitWorkspaces,
       isOnboardingComplete,
       userPlan,
       canAccessTeam,
@@ -271,6 +295,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       githubSignIn,
       logout,
       refreshUser,
+      fetchAndInitWorkspaces,
       isOnboardingComplete,
       userPlan,
       canAccessTeam,

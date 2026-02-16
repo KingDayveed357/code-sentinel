@@ -70,13 +70,11 @@ export async function importRepositoriesController(
     reply: FastifyReply
 ) {
     const workspaceId = request.workspace!.id; 
-    const userPlan = request.profile!.plan;
     const { repositories, provider } = importRepositoriesSchema.parse(request.body);
 
     const result = await service.importRepositories(
         request.server,
         workspaceId,
-        userPlan,
         repositories,
         provider
     );

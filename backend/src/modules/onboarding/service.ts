@@ -2,7 +2,8 @@
 
 import type { FastifyInstance } from "fastify";
 import type { RepositoryImportInput } from "../integrations/github/types";
-import * as githubService from "../integrations/github/service";
+import { GitHubService } from "../integrations/github/service";
+import { IntegrationsRepository } from "../integrations/repository";
 import * as repoService from "../repositories/service";
 import type { OnboardingState } from "./state-machine";
 
@@ -97,6 +98,9 @@ export async function fetchGitHubRepositories(
     workspaceId: string
 ) {
     try {
+        const integrationsRepo = new IntegrationsRepository(fastify);
+        const githubService = new GitHubService(integrationsRepo, fastify);
+        
         return await githubService.fetchRepositories(workspaceId);
     } catch (error: any) {
         // ✅ CRITICAL FIX: Missing GitHub integration is NOT an auth error
@@ -122,7 +126,6 @@ export async function fetchGitHubRepositories(
 export async function saveRepositories(
     fastify: FastifyInstance,
     workspaceId: string,
-    userPlan: string,
     repositories: RepositoryImportInput[],
     provider: "github" | "gitlab" | "bitbucket" = "github"
 ) {
@@ -130,7 +133,6 @@ export async function saveRepositories(
     return await repoService.importRepositories(
         fastify,
         workspaceId,
-        userPlan,
         repositories,
         provider
     );

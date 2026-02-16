@@ -37,8 +37,16 @@ export function WorkspaceSwitcher() {
     return <WorkspaceSwitcherSkeleton />;
   }
 
-  const personalWorkspaces = workspaces.filter((w) => w.type === "personal");
-  const teamWorkspaces = workspaces.filter((w) => w.type === "team");
+  // Filter visible workspaces - exclude pending/expired unless we are specifically allowing them somewhere else
+  // Requirement: "Pending workspaces must NOT appear in switcher"
+  // Personal workspaces are always active. Team workspaces might be pending or expired.
+  
+  const activeWorkspaces = workspaces.filter(w => 
+    w.type === 'personal' || w.billing_status === 'active'
+  );
+
+  const personalWorkspaces = activeWorkspaces.filter((w) => w.type === "personal");
+  const teamWorkspaces = activeWorkspaces.filter((w) => w.type === "team");
   const isLoading = isSwitching;
 
   return (

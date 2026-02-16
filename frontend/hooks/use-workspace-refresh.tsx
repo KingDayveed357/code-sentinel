@@ -58,10 +58,10 @@ export function useWorkspaceRefresh(options?: {
           JSON.stringify(updatedCurrentWorkspace) !== JSON.stringify(workspace);
 
         if (hasChanged) {
-          console.log("✨ Workspace data changed, updating store:", {
-            old: workspace.name,
-            new: updatedCurrentWorkspace.name,
-          });
+          // console.log("✨ Workspace data changed, updating store:", {
+          //   old: workspace.name,
+          //   new: updatedCurrentWorkspace.name,
+          // });
 
           // Update store with fresh data
           setWorkspace(updatedCurrentWorkspace);
@@ -76,12 +76,14 @@ export function useWorkspaceRefresh(options?: {
           });
 
           lastRefreshRef.current = Date.now();
-        } else {
-          console.log("✅ Workspace data unchanged");
-        }
-      } else {
-        console.warn("⚠️ Current workspace not found in updated list");
-      }
+        } 
+        // else {
+        //   console.log("✅ Workspace data unchanged");
+        // }
+      } 
+      // else {
+      //   console.warn("⚠️ Current workspace not found in updated list");
+      // }
     } catch (error) {
       console.error("❌ Failed to refresh workspace data:", error);
     } finally {
@@ -101,11 +103,19 @@ export function useWorkspaceRefresh(options?: {
     await refreshWorkspaceData(true);
   };
 
+  // Keep track of latest workspace in a ref to avoid stale closures in setInterval
+  const workspaceRef = useRef(workspace);
+  useEffect(() => {
+    workspaceRef.current = workspace;
+  }, [workspace]);
+
   /**
    * Set up polling for workspace updates
    */
   useEffect(() => {
-    if (!workspace || !enablePolling) return;
+    // Don't poll if no workspace or polling disabled
+    // We check workspaceRef.current in the interval, but need at least one workspace to start
+    if (!enablePolling) return;
 
     // Clear existing interval
     if (pollingIntervalRef.current) {
@@ -114,8 +124,11 @@ export function useWorkspaceRefresh(options?: {
 
     // Set up new polling interval
     pollingIntervalRef.current = setInterval(() => {
-      console.log("🔄 Polling workspace data...");
-      refreshWorkspaceData(false); // Silent refresh
+      // Check if we have a workspace to poll for
+      if (!workspaceRef.current) return;
+      
+      // console.log("🔄 Polling workspace data...");
+      refreshWorkspaceDataRef.current?.(false); // Call the latest refresh function
     }, pollingInterval);
 
     return () => {
@@ -123,7 +136,13 @@ export function useWorkspaceRefresh(options?: {
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [workspace?.id, pollingInterval, enablePolling]);
+  }, [pollingInterval, enablePolling]);
+
+  // Keep latest refresh function in ref too
+  const refreshWorkspaceDataRef = useRef(refreshWorkspaceData);
+  useEffect(() => {
+    refreshWorkspaceDataRef.current = refreshWorkspaceData;
+  });
 
   /**
    * Listen for custom refresh events (e.g., after settings update)
@@ -131,7 +150,7 @@ export function useWorkspaceRefresh(options?: {
   useEffect(() => {
     const handleWorkspaceUpdate = (event: CustomEvent<{ workspaceId: string }>) => {
       if (event.detail.workspaceId === workspace?.id) {
-        console.log("📢 Received workspace update event");
+        // console.log("📢 Received workspace update event");
         triggerRefresh();
       }
     };
@@ -159,7 +178,7 @@ export function useWorkspaceRefresh(options?: {
         
         // Only refresh if > 30s since last refresh
         if (timeSinceLastRefresh > 30000) {
-          console.log("👀 Window focused, refreshing workspace data");
+          // console.log("👀 Window focused, refreshing workspace data");
           refreshWorkspaceData(false);
         }
       }

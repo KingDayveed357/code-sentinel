@@ -38,6 +38,9 @@ export interface WorkspaceContext {
     type: 'personal' | 'team';
     owner_id: string | null;
     plan: string;
+    billing_status?: 'none' | 'pending' | 'active' | 'expired';
+    subscription_provider?: string | null;
+    subscription_id?: string | null;
     settings: any;
     created_at: string;
     updated_at: string;

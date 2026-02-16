@@ -10,6 +10,7 @@ import {
   requireWorkspace 
 } from "../../middleware/gatekeepers";
 import { resolveWorkspace } from "../../middleware/workspace";
+import { requireActiveWorkspace } from "../../middleware/billing-guard";
 
 // Sub-module routes
 import repositoriesWorkspaceRoutes from "../repositories/routes";
@@ -39,6 +40,7 @@ export default async function workspacesRoutes(fastify: FastifyInstance) {
     ...basePreHandler,
     resolveWorkspace,
     requireWorkspace,
+    requireActiveWorkspace
   ];
 
   // =====================================================
@@ -164,6 +166,16 @@ export default async function workspacesRoutes(fastify: FastifyInstance) {
   );
 
   /**
+   * GET /api/workspaces/invitations/:token/preview
+   * Preview invitation (Public)
+   */
+  fastify.get(
+    "/invitations/:token/preview",
+    // No preHandler - Public route
+    (req, reply) => controller.previewInvitation(req as any, reply)
+  );
+
+  /**
    * DELETE /api/workspaces/:workspaceId/invitations/:invitationId
    * Cancel invitation
    */
@@ -185,6 +197,23 @@ export default async function workspacesRoutes(fastify: FastifyInstance) {
     "/:workspaceId/activity",
     { preHandler: workspacePreHandler },
     (req, reply) => controller.getActivity(req as any, reply)
+  );
+
+  /**
+   * POST /api/workspaces/:workspaceId/checkout
+   * Initiate checkout for a workspace
+   */
+  fastify.post(
+    "/:workspaceId/checkout",
+    { 
+      preHandler: [
+        ...basePreHandler,
+        resolveWorkspace,
+        requireWorkspace
+        // specific check logic is inside controller (billing_status check)
+      ] 
+    },
+    (req, reply) => controller.initiateCheckout(req as any, reply)
   );
 
   // =====================================================

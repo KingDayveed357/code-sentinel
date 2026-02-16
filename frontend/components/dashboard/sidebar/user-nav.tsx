@@ -116,12 +116,12 @@ export function UserNav({ isCollapsed }: UserNavProps) {
             )}
 
             <DropdownMenuGroup className="py-1">
-              <DropdownMenuItem asChild>
+              {/* <DropdownMenuItem asChild>
                 <Link href="/dashboard/settings/profile" className="cursor-pointer py-2">
                   <User className="mr-2 h-4 w-4" />
                   <span>Profile</span>
                 </Link>
-              </DropdownMenuItem>
+              </DropdownMenuItem> */}
               <DropdownMenuItem asChild>
                 <Link href="/dashboard/billing" className="cursor-pointer py-2">
                   <CreditCard className="mr-2 h-4 w-4" />

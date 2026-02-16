@@ -14,7 +14,6 @@ export class ScansService {
   async startScan(
     workspaceId: string,
     userId: string,
-    userPlan: string,
     repositoryId: string,
     branch: string,
     scanType: "quick" | "full"
@@ -23,7 +22,7 @@ export class ScansService {
     const entitlements = new EntitlementsService(this.fastify);
 
     // Check monthly limit
-    const monthlyLimitCheck = await entitlements.checkMonthlyLimit(workspaceId, userPlan);
+    const monthlyLimitCheck = await entitlements.checkMonthlyLimit(workspaceId);
     if (!monthlyLimitCheck.allowed) {
       throw this.fastify.httpErrors.forbidden(monthlyLimitCheck.message || 'Monthly scan limit reached');
     }
@@ -45,12 +44,13 @@ export class ScansService {
     }
 
     // Check concurrent limit
-    const concurrentLimit = this.getConcurrentScanLimit(userPlan);
+    const plan = await entitlements.getWorkspacePlan(workspaceId);
+    const concurrentLimit = this.getConcurrentScanLimit(plan);
     const runningScanCount = await this.repository.countRunningScans(workspaceId);
 
     if (runningScanCount >= concurrentLimit) {
       throw this.fastify.httpErrors.tooManyRequests(
-        `Maximum ${concurrentLimit} concurrent scans allowed for ${userPlan} plan.`
+        `Maximum ${concurrentLimit} concurrent scans allowed for ${plan} plan.`
       );
     }
 

@@ -72,13 +72,13 @@ export async function apiFetch(endpoint: string, options: FetchOptions = {}) {
   }
 
   // Log requests in development
-  if (process.env.NODE_ENV === 'development') {
-    console.log('🌐 API Request:', {
-      method: restOptions.method || 'GET',
-      endpoint,
-      workspace: params.workspace || fetchHeaders['X-Workspace-ID'],
-    });
-  }
+  // if (process.env.NODE_ENV === 'development') {
+  //   console.log('🌐 API Request:', {
+  //     method: restOptions.method || 'GET',
+  //     endpoint,
+  //     workspace: params.workspace || fetchHeaders['X-Workspace-ID'],
+  //   });
+  // }
 
   const response = await fetch(url, {
     ...restOptions,
@@ -87,12 +87,29 @@ export async function apiFetch(endpoint: string, options: FetchOptions = {}) {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({
-      error: "Unknown error",
+    const errorBody = await response.json().catch(() => ({
+      message: "Unknown error",
       statusCode: response.status,
     }));
-    throw new Error(error.error || `Request failed with status ${response.status}`);
+
+    // Fastify/HttpErrors typically uses 'message', but some APIs use 'error'
+    const errorMessage = errorBody.message || errorBody.error || `Request failed with status ${response.status}`;
+    throw new Error(errorMessage);
   }
 
-  return response.json();
+  if (response.status === 204) {
+    return null;
+  }
+
+  const text = await response.text();
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    console.error('Failed to parse JSON response:', text);
+    throw new Error('Invalid JSON response from server');
+  }
 }

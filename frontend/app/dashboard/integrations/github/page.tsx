@@ -35,13 +35,14 @@ import {
   Star,
   GitFork,
   AlertTriangle,
+  Crown,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { repositoriesApi } from "@/lib/api/repositories";
 import { integrationsApi } from "@/lib/api/integrations";
 import { useWorkspace } from "@/hooks/use-workspace";
-import { useGitHubRepositories, useGitHubIntegrationStatus, workspaceKeys } from "@/hooks/use-dashboard-data";
+import { useGitHubRepositories, useGitHubIntegrationStatus, workspaceKeys, useEntitlements } from "@/hooks/use-dashboard-data";
 import type { GitHubRepository, GitHubAccount } from "@/lib/api/repositories";
 import { toast } from 'sonner'
 
@@ -64,6 +65,11 @@ export default function GitHubIntegrationPage() {
     isFetching: isFetchingRepos,
     refetch: refetchRepos,
   } = useGitHubRepositories();
+
+  const {
+    data: entitlements,
+    isLoading: isLoadingEntitlements
+  } = useEntitlements();
   
   // Derived state from queries
   const connected = integrationStatus?.connected ?? false;
@@ -85,6 +91,11 @@ export default function GitHubIntegrationPage() {
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Derived limit logic
+  const repositoriesRemaining = entitlements?.remaining?.repositories ?? null;
+  const isLimitReached = repositoriesRemaining !== null && repositoriesRemaining <= 0;
+  const canSelectMore = repositoriesRemaining === null || (repositoriesRemaining - selectedRepos.size) > 0;
   
   // Disconnect modal
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
@@ -350,7 +361,23 @@ export default function GitHubIntegrationPage() {
       }
     } catch (err: any) {
       console.error('Failed to import repositories:', err);
-      setError(err.message || "Failed to import repositories");
+      const errorMessage = err.message || "Failed to import repositories";
+      
+      // Check if it's a repository limit error
+      if (errorMessage.includes("Repository limit reached")) {
+        toast.error("Repository Limit Reached", {
+          description: errorMessage,
+          action: {
+            label: "Upgrade Plan",
+            onClick: () => router.push("/dashboard/billing"),
+          },
+        });
+      } else {
+        toast.error("Failed to import repositories", {
+          description: errorMessage,
+        });
+      }
+      setError(errorMessage);
     } finally {
       setImporting(false);
     }
@@ -417,18 +444,12 @@ export default function GitHubIntegrationPage() {
         </Alert>
       )}
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {success && (
-        <Alert className="border-green-500 bg-green-50 dark:bg-green-950/20">
-          <Check className="h-4 w-4 text-green-600" />
-          <AlertDescription className="text-green-800 dark:text-green-400">
-            {success}
+      {isLimitReached && (
+        <Alert variant="destructive" className="border-amber-500 bg-amber-50 dark:bg-amber-950/20 text-amber-900 dark:text-amber-400">
+          <Crown className="h-4 w-4 text-amber-600" />
+          <AlertDescription>
+            <strong>Repository limit reached:</strong> You've used all {entitlements?.limits?.repositories} repository slots available on the {entitlements?.plan} plan. 
+            Please <Link href="/dashboard/billing" className="font-bold underline">upgrade your plan</Link> to import more repositories.
           </AlertDescription>
         </Alert>
       )}
@@ -671,7 +692,7 @@ export default function GitHubIntegrationPage() {
                         <Checkbox
                           checked={selectedRepos.has(repo.full_name)}
                           onCheckedChange={() => toggleRepo(repo.full_name)}
-                          disabled={repo.already_imported}
+                          disabled={repo.already_imported || (!selectedRepos.has(repo.full_name) && !canSelectMore)}
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
@@ -725,7 +746,7 @@ export default function GitHubIntegrationPage() {
               <div className="flex gap-3 pt-4">
                 <Button
                   onClick={handleImport}
-                  disabled={selectedRepos.size === 0 || importing}
+                  disabled={selectedRepos.size === 0 || importing || (repositoriesRemaining !== null && selectedRepos.size > repositoriesRemaining)}
                   className="flex-1"
                 >
                   {importing ? (

@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useScans } from "@/hooks/use-scans";
-import { useRouter } from "next/navigation";
+import { useProgressRouter as useRouter } from "@/hooks/use-progress-router";
 import { formatDistanceToNow } from "date-fns";
 import {
   Table,

@@ -1,23 +1,18 @@
 // src/modules/shared/repositories/validation.ts
 import type { FastifyInstance } from "fastify";
+import { PLAN_LIMITS } from "../entitlements/limits";
 
 /**
  * Plan limits for repository imports
  */
-const PLAN_LIMITS = {
-    Free: 5,
-    Dev: 20,
-    Team: 100,
-    Enterprise: Infinity,
-} as const;
+import { EntitlementsService } from "../entitlements/service";
 
 /**
  * Validate if user can import repositories based on their plan
  */
 export async function validateRepositoryImport(
     fastify: FastifyInstance,
-    userId: string,
-    userPlan: string,
+    workspaceId: string,
     requestedCount: number
 ): Promise<{
     allowed: boolean;
@@ -26,63 +21,53 @@ export async function validateRepositoryImport(
     limit: number;
     message: string;
 }> {
-    // Get user's current repo count
-    const { count: currentCount, error } = await fastify.supabase
-        .from("repositories")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", userId);
+    const entitlements = new EntitlementsService(fastify);
+    
+    // Fetch plan for error messages
+    const plan = await entitlements.getWorkspacePlan(workspaceId);
 
-    if (error) {
-        fastify.log.error({ error, userId }, "Failed to count repositories");
-        throw fastify.httpErrors.internalServerError(
-            "Failed to validate repository import"
-        );
+    // Use EntitlementsService to check limits (it handles workspace_id vs user_id resolution)
+    // We pass 0 as requested count initially to just get status, OR pass actual count
+    const { current, limit, remaining, unlimited, allowed } = await entitlements.checkRepositoryLimit(
+        workspaceId,
+        requestedCount
+    );
+
+    // Calculate allowed count for partial imports
+    let allowedCount = requestedCount;
+    let isAllowed = allowed;
+    let message = "Import allowed";
+
+    if (!unlimited) {
+        if (remaining <= 0) {
+            isAllowed = false;
+            allowedCount = 0;
+            message = `Repository limit reached. ${plan} plan allows ${limit} repositories. Please upgrade your plan to import more.`;
+        } else if (remaining < requestedCount) {
+            // Partial import allowed
+            isAllowed = true;
+            allowedCount = remaining;
+            message = `You can only import ${remaining} more repositories. ${plan} plan allows ${limit} total repositories.`;
+        }
     }
 
-    const current = currentCount || 0;
-    const limit = PLAN_LIMITS[userPlan as keyof typeof PLAN_LIMITS] || PLAN_LIMITS.Free;
-    const remaining = limit - current;
-
-    // Check if user has reached their limit
-    if (remaining <= 0) {
-        return {
-            allowed: false,
-            allowed_count: 0,
-            current_count: current,
-            limit,
-            message: `Repository limit reached. ${userPlan} plan allows ${limit} repositories. Please upgrade your plan to import more.`,
-        };
-    }
-
-    // Check if requested count exceeds remaining
-    if (requestedCount > remaining) {
-        return {
-            allowed: true,
-            allowed_count: remaining,
-            current_count: current,
-            limit,
-            message: `You can only import ${remaining} more repositories. ${userPlan} plan allows ${limit} total repositories.`,
-        };
-    }
-
-    // All good
     return {
-        allowed: true,
-        allowed_count: requestedCount,
+        allowed: isAllowed,
+        allowed_count: allowedCount,
         current_count: current,
         limit,
-        message: "Import allowed",
+        message,
     };
 }
 
 /**
  * Get repository limits for a user's plan
  */
-export function getRepositoryLimits(userPlan: string): {
+export function getRepositoryLimits(plan: string): {
     limit: number;
     unlimited: boolean;
 } {
-    const limit = PLAN_LIMITS[userPlan as keyof typeof PLAN_LIMITS] || PLAN_LIMITS.Free;
+    const limit = (PLAN_LIMITS as any)[plan] ? (PLAN_LIMITS as any)[plan].repositories : PLAN_LIMITS.Free.repositories;
 
     return {
         limit,

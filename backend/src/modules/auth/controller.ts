@@ -10,14 +10,22 @@ import { env } from "../../env";
 
 export async function githubOAuthController(
   fastify: FastifyInstance,
-  request: FastifyRequest,
+  request: FastifyRequest<{ Querystring: { invite_token?: string } }>,
   reply: FastifyReply
 ) {
   try {
+    const { invite_token } = request.query;
+    
+    // Append invite_token to the callback URL if present
+    const callbackUrl = new URL(`${env.NEXT_PUBLIC_FRONTEND_URL}/oauth/callback`);
+    if (invite_token) {
+      callbackUrl.searchParams.set("invite_token", invite_token);
+    }
+
     const { data, error } = await fastify.supabase.auth.signInWithOAuth({
       provider: "github",
       options: {
-        redirectTo: `${env.NEXT_PUBLIC_FRONTEND_URL}/oauth/callback`,
+        redirectTo: callbackUrl.toString(),
         scopes: "read:user user:email repo",
       },
     });
@@ -29,7 +37,7 @@ export async function githubOAuthController(
       );
     }
 
-    fastify.log.info("GitHub OAuth URL generated");
+    fastify.log.info({ invite_token: !!invite_token }, "GitHub OAuth URL generated");
     return reply.send({ url: data.url });
   } catch (error) {
     fastify.log.error({ error }, "GitHub OAuth initiation failed");
@@ -87,7 +95,7 @@ export async function oauthCallbackController(
     // Check if user profile already exists to preserve onboarding state
     const { data: existingProfile } = await fastify.supabase
       .from("users")
-      .select("onboarding_completed, onboarding_state, plan")
+      .select("onboarding_completed, onboarding_state")
       .eq("id", userId)
       .maybeSingle();
 
@@ -106,7 +114,6 @@ export async function oauthCallbackController(
     const onboardingState = existingProfile?.onboarding_state
       ? { ...defaultOnboardingState, ...existingProfile.onboarding_state }
       : defaultOnboardingState;
-    const userPlan = existingProfile?.plan ?? "Free";
 
     if (isNewUser) {
       fastify.log.info({ userId }, "Creating new user profile");
@@ -130,7 +137,6 @@ export async function oauthCallbackController(
             githubUser?.name ||
             "User",
           avatar_url: githubUser?.avatar_url,
-          plan: userPlan,
           onboarding_completed: onboardingCompleted,
           onboarding_state: onboardingState,
         },

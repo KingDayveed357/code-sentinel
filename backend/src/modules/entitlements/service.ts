@@ -5,14 +5,33 @@ export class EntitlementsService {
   constructor(private fastify: FastifyInstance) {}
 
   /**
-   * Check if user can perform an action (repositories)
-   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
-   *                  The parameter name is kept as userId for backward compatibility
-   *                  during migration. Usage tracking tables still use user_id column.
+   * Get workspace subscription
+   */
+  async getWorkspaceSubscription(workspaceId: string) {
+    const { data: subscription } = await this.fastify.supabase
+      .from('subscriptions')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    return subscription;
+  }
+
+  /**
+   * Helper to resolve plan from subscription
+   */
+  async getWorkspacePlan(workspaceId: string): Promise<string> {
+    const subscription = await this.getWorkspaceSubscription(workspaceId);
+    return subscription?.plan || 'Free';
+  }
+
+  /**
+   * Check if workspace can perform an action (repositories)
+   * @param workspaceId - The workspace ID
    */
   async checkRepositoryLimit(
-    userId: string,
-    plan: string,
+    workspaceId: string,
     requestedCount: number
   ): Promise<{
     allowed: boolean;
@@ -22,14 +41,14 @@ export class EntitlementsService {
     unlimited: boolean;
     message?: string;
   }> {
+    const plan = await this.getWorkspacePlan(workspaceId);
     const limits = getLimits(plan as any);
     const unlimited = isUnlimited(limits.repositories);
-
-    // Get current count
+    
     const { count: currentCount } = await this.fastify.supabase
       .from('repositories')
       .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId);
+      .eq('workspace_id', workspaceId);
 
     const current = currentCount || 0;
     const limit = unlimited ? Infinity : limits.repositories;
@@ -56,60 +75,11 @@ export class EntitlementsService {
   }
 
   /**
-   * Check if user can start a scan
-   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
-   *                  The parameter name is kept as userId for backward compatibility
-   *                  during migration. Usage tracking tables still use user_id column.
-   * @deprecated Use checkMonthlyLimit() instead. Concurrent scans are now checked via direct database query.
-   */
-  async checkScanLimit(
-    userId: string,
-    plan: string
-  ): Promise<{
-    allowed: boolean;
-    type: 'monthly' | 'concurrent';
-    current: number;
-    limit: number;
-    remaining: number;
-    message?: string;
-  }> {
-    const limits = getLimits(plan as any);
-    const usage = await this.getOrCreateUsageRecord(userId, plan);
-
-    // Check monthly limit first
-    const monthlyUnlimited = isUnlimited(limits.scans_per_month);
-    if (!monthlyUnlimited && usage.scans_used >= limits.scans_per_month) {
-      return {
-        allowed: false,
-        type: 'monthly',
-        current: usage.scans_used,
-        limit: limits.scans_per_month,
-        remaining: 0,
-        message: `Monthly scan limit reached. ${plan} plan allows ${limits.scans_per_month} scans per month.`,
-      };
-    }
-
-    // ✅ FIX: Removed concurrent limit check - now handled by direct database query
-    // This prevents issues where the concurrent_scans counter gets out of sync
-
-    return {
-      allowed: true,
-      type: 'monthly',
-      current: usage.scans_used,
-      limit: monthlyUnlimited ? Infinity : limits.scans_per_month,
-      remaining: monthlyUnlimited
-        ? Infinity
-        : limits.scans_per_month - usage.scans_used,
-    };
-  }
-
-  /**
    * Check monthly scan limit only (concurrent checked separately via database)
-   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
+   * @param workspaceId - The workspace ID
    */
   async checkMonthlyLimit(
-    userId: string,
-    plan: string
+    workspaceId: string
   ): Promise<{
     allowed: boolean;
     current: number;
@@ -117,8 +87,9 @@ export class EntitlementsService {
     remaining: number;
     message?: string;
   }> {
+    const plan = await this.getWorkspacePlan(workspaceId);
     const limits = getLimits(plan as any);
-    const usage = await this.getOrCreateUsageRecord(userId, plan);
+    const usage = await this.getOrCreateUsageRecord(workspaceId, plan);
 
     // Check monthly limit only
     const monthlyUnlimited = isUnlimited(limits.scans_per_month);
@@ -144,80 +115,79 @@ export class EntitlementsService {
 
   /**
    * Increment scan usage when scan starts
-   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
-   *                  The parameter name is kept as userId for backward compatibility
-   *                  during migration. Usage tracking tables still use user_id column.
+   * @param workspaceId - The workspace ID
    */
-  async trackScanStart(userId: string, scanId: string): Promise<void> {
+  async trackScanStart(workspaceId: string, scanId: string): Promise<void> {
+    const plan = await this.getWorkspacePlan(workspaceId);
     const { year, month } = this.getCurrentPeriod();
-
-    // ✅ FIX: Only increment monthly counter
+    
+    // Only increment monthly counter
     // Concurrent scans are now tracked via database scan status
-    const { data: usage } = await this.fastify.supabase
-      .from('usage_tracking')
+    let query = this.fastify.supabase
+      .from('workspace_usage_tracking')
       .select('scans_used')
-      .eq('user_id', userId)
+      .eq('workspace_id', workspaceId)
       .eq('period_year', year)
-      .eq('period_month', month)
-      .maybeSingle();
+      .eq('period_month', month);
+
+    const { data: usage } = await query.maybeSingle();
 
     if (usage) {
       // Update existing record
       await this.fastify.supabase
-        .from('usage_tracking')
+        .from('workspace_usage_tracking')
         .update({ scans_used: usage.scans_used + 1 })
-        .eq('user_id', userId)
+        .eq('workspace_id', workspaceId)
         .eq('period_year', year)
         .eq('period_month', month);
+
     } else {
       // Create new record
-      await this.getOrCreateUsageRecord(userId, 'Free'); // Will create with scans_used: 0
+      await this.getOrCreateUsageRecord(workspaceId, plan); 
+      
       await this.fastify.supabase
-        .from('usage_tracking')
+        .from('workspace_usage_tracking')
         .update({ scans_used: 1 })
-        .eq('user_id', userId)
+        .eq('workspace_id', workspaceId)
         .eq('period_year', year)
         .eq('period_month', month);
     }
 
     // Audit trail
-    await this.logUsage(userId, 'scan', scanId, 'start');
+    await this.logUsage(workspaceId, 'scan', scanId, 'start');
   }
 
   /**
    * Log scan completion for audit trail
-   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
-   *                  The parameter name is kept as userId for backward compatibility
-   *                  during migration. Usage tracking tables still use user_id column.
    */
-  async trackScanComplete(userId: string, scanId: string): Promise<void> {
-    // ✅ FIX: Only log completion for audit trail
-    // No counter decrement needed - concurrent scans tracked via database scan status
-    await this.logUsage(userId, 'scan', scanId, 'complete');
+  async trackScanComplete(workspaceId: string, scanId: string): Promise<void> {
+    // Only log completion for audit trail
+    await this.logUsage(workspaceId, 'scan', scanId, 'complete');
   }
 
   /**
    * Get or create usage record for current month (lazy reset)
    */
-  private async getOrCreateUsageRecord(userId: string, plan: string) {
+  private async getOrCreateUsageRecord(workspaceId: string, plan: string) {
     const { year, month } = this.getCurrentPeriod();
     const limits = getLimits(plan as any);
 
-    const { data, error } = await this.fastify.supabase
-      .from('usage_tracking')
+    let query = this.fastify.supabase
+      .from('workspace_usage_tracking')
       .select('*')
-      .eq('user_id', userId)
+      .eq('workspace_id', workspaceId)
       .eq('period_year', year)
-      .eq('period_month', month)
-      .maybeSingle();
+      .eq('period_month', month);
 
-    if (data) return data;
+    const { data: existingData } = await query.maybeSingle();
+
+    if (existingData) return existingData;
 
     // Create new record for this month
     const { data: newRecord, error: insertError } = await this.fastify.supabase
-      .from('usage_tracking')
+      .from('workspace_usage_tracking')
       .insert({
-        user_id: userId,
+        workspace_id: workspaceId,
         period_year: year,
         period_month: month,
         scans_used: 0,
@@ -234,20 +204,36 @@ export class EntitlementsService {
       .select()
       .single();
 
-    if (insertError) throw insertError;
+    if (insertError) {
+        // If conflict (race condition), retry fetch
+        if (insertError.code === '23505') { // unique_violation
+            const { data: retryData } = await this.fastify.supabase
+                .from('workspace_usage_tracking')
+                .select('*')
+                .eq('workspace_id', workspaceId)
+                .eq('period_year', year)
+                .eq('period_month', month)
+                .single();
+            return retryData;
+        }
+        throw insertError;
+    }
     return newRecord;
   }
 
   /**
-   * Get current usage for user (for /me/entitlements)
-   * @param userId - NOTE: In workspace-aware contexts, this is actually workspaceId
-   *                  The parameter name is kept as userId for backward compatibility
-   *                  during migration. Usage tracking tables still use user_id column.
-   *                  TODO: Migrate usage_tracking and usage_history tables to use workspace_id.
+   * Get current usage for workspace
    */
-  async getUserUsage(userId: string, plan: string) {
-    const usage = await this.getOrCreateUsageRecord(userId, plan);
+  async getWorkspaceUsage(workspaceId: string) {
+    const plan = await this.getWorkspacePlan(workspaceId);
+    const usage = await this.getOrCreateUsageRecord(workspaceId, plan);
     const limits = getLimits(plan as any);
+
+    // Also get current repository count from DB as source of truth
+    const { count: repoCount } = await this.fastify.supabase
+        .from('repositories')
+        .select('*', { count: 'exact', head: true })
+        .eq('workspace_id', workspaceId);
 
     return {
       plan,
@@ -261,14 +247,14 @@ export class EntitlementsService {
         concurrent_scans: limits.concurrent_scans,
       },
       usage: {
-        repositories: usage.repositories_used,
+        repositories: repoCount || 0,
         scans_this_month: usage.scans_used,
         concurrent_scans: usage.concurrent_scans,
       },
       remaining: {
         repositories: isUnlimited(limits.repositories)
           ? null
-          : limits.repositories - usage.repositories_used,
+          : limits.repositories - (repoCount || 0),
         scans_this_month: isUnlimited(limits.scans_per_month)
           ? null
           : limits.scans_per_month - usage.scans_used,
@@ -283,9 +269,10 @@ export class EntitlementsService {
   }
 
   /**
-   * Check if user has access to a feature
+   * Check if plan has access to a feature
    */
-  async hasFeature(plan: string, feature: string): Promise<boolean> {
+  async hasFeature(workspaceId: string, feature: string): Promise<boolean> {
+    const plan = await this.getWorkspacePlan(workspaceId);
     const { data } = await this.fastify.supabase
       .from('plan_entitlements')
       .select('enabled')
@@ -299,7 +286,8 @@ export class EntitlementsService {
   /**
    * Get all features for a plan
    */
-  async getPlanFeatures(plan: string): Promise<Array<{ feature: string; enabled: boolean }>> {
+  async getPlanFeatures(workspaceId: string): Promise<{ plan: string, features: Array<{ feature: string; enabled: boolean }> }> {
+    const plan = await this.getWorkspacePlan(workspaceId);
     const { data, error } = await this.fastify.supabase
       .from('plan_entitlements')
       .select('feature, enabled')
@@ -309,7 +297,7 @@ export class EntitlementsService {
       throw error;
     }
 
-    return data || [];
+    return { plan, features: data || [] };
   }
 
   private getCurrentPeriod() {
@@ -327,16 +315,20 @@ export class EntitlementsService {
   }
 
   private async logUsage(
-    userId: string,
+    workspaceId: string,
     resourceType: string,
     resourceId: string,
     action: string
   ) {
-    await this.fastify.supabase.from('usage_history').insert({
-      user_id: userId,
+    // Convert metadata to Record<string, any> to satisfy type requirements
+    const metadata: Record<string, any> = { workspace_id: workspaceId };
+
+    await this.fastify.supabase.from('workspace_usage_history').insert({
+      workspace_id: workspaceId,
       resource_type: resourceType,
       resource_id: resourceId,
       action,
+      metadata: metadata,
     });
   }
 }

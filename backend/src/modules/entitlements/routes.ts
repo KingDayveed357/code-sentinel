@@ -23,7 +23,7 @@ export default async function entitlementsRoutes(fastify: FastifyInstance) {
     const { workspaceId } = request.params as { workspaceId: string };
     const { plan } = request.workspace!;
 
-    const usage = await service.getUserUsage(workspaceId, plan);
+    const usage = await service.getWorkspaceUsage(workspaceId, plan);
 
     return reply.send({
       success: true,

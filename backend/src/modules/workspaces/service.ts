@@ -14,9 +14,10 @@ import type {
 } from './types';
 import { generateSlug } from '../../utils/slug';
 import { sendWorkspaceInvitationEmail } from '../../utils/email';
+import * as crypto from 'crypto';
 
 export class WorkspaceService {
-  constructor(private fastify: FastifyInstance) {}
+  constructor(public fastify: FastifyInstance) {}
 
   /**
    * Log workspace activity
@@ -78,31 +79,45 @@ export class WorkspaceService {
       .eq('workspaces.type', 'team');
 
     if (memberships && memberships.length > 0) {
-      // Get member counts for team workspaces
-      const workspaceIds = memberships.map((m: any) => m.workspace_id);
-      const { data: memberCounts } = await this.fastify.supabase
-        .from('workspace_members')
-        .select('workspace_id')
-        .in('workspace_id', workspaceIds)
-        .eq('status', 'active');
-
-      const countsByWorkspace: Record<string, number> = {};
-      (memberCounts || []).forEach((mc: any) => {
-        countsByWorkspace[mc.workspace_id] =
-          (countsByWorkspace[mc.workspace_id] || 0) + 1;
+      // Filter memberships based on workspace status
+      const activeMemberships = memberships.filter((m: any) => {
+        const ws = m.workspaces as Workspace;
+        // Allow if active/free OR if pending/expired but user is owner (so they can pay/manage)
+        // Actually, preventing access to expired is good, but owner needs to see it to renew.
+        return ws.plan === 'free' || 
+               ws.billing_status === 'active' || 
+               (['pending', 'expired'].includes(ws.billing_status) && m.role === 'owner');
       });
 
-      memberships.forEach((membership: any) => {
-        workspaces.push({
-          ...(membership.workspaces as Workspace),
-          role: membership.role as WorkspaceRole,
-          memberCount: countsByWorkspace[membership.workspace_id] || 1,
+      if (activeMemberships.length > 0) {
+        // Get member counts for valid workspaces
+        const workspaceIds = activeMemberships.map((m: any) => m.workspace_id);
+        const { data: memberCounts } = await this.fastify.supabase
+          .from('workspace_members')
+          .select('workspace_id')
+          .in('workspace_id', workspaceIds)
+          .eq('status', 'active');
+
+        const countsByWorkspace: Record<string, number> = {};
+        (memberCounts || []).forEach((mc: any) => {
+          countsByWorkspace[mc.workspace_id] =
+            (countsByWorkspace[mc.workspace_id] || 0) + 1;
         });
-      });
+
+        activeMemberships.forEach((membership: any) => {
+          workspaces.push({
+            ...(membership.workspaces as Workspace),
+            role: membership.role as WorkspaceRole,
+            memberCount: countsByWorkspace[membership.workspace_id] || 1,
+          });
+        });
+      }
     }
 
     return workspaces;
   }
+
+
 
   /**
    * Get workspace by ID with user's role
@@ -187,6 +202,8 @@ export class WorkspaceService {
         type: data.type,
         owner_id: userId,
         plan: data.plan || (data.type === 'personal' ? 'Free' : 'Team'),
+        billing_status: data.type === 'personal' ? 'active' : 'pending', // Personal is free (active), Team is pending initially
+        expires_at: data.type === 'team' ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null,
         settings: {},
       })
       .select()
@@ -236,7 +253,7 @@ export class WorkspaceService {
 
     // Get user profile to use their name
     const { data: profile } = await this.fastify.supabase
-      .from('profiles')
+      .from('users')
       .select('full_name, email')
       .eq('id', userId)
       .single();
@@ -400,7 +417,7 @@ export class WorkspaceService {
       .select(
         `
         *,
-        users!workspace_members_user_id_fkey (
+        user:users!workspace_members_user_id_fkey (
           id,
           email,
           full_name,
@@ -446,13 +463,20 @@ export class WorkspaceService {
       );
     }
 
+    // Fetch user for logging email
+    const { data: userData } = await this.fastify.supabase
+      .from('users')
+      .select('email')
+      .eq('id', userId)
+      .single();
+
     await this.logActivity(
       workspaceId,
       invitedBy,
       'member.added',
       'workspace_member',
       data.id,
-      { user_id: userId, role }
+      { user_id: userId, role, email: userData?.email }
     );
 
     return data as WorkspaceMember;
@@ -503,6 +527,9 @@ export class WorkspaceService {
       }
     }
 
+    // Generate secure token
+    const token = crypto.randomBytes(32).toString('hex');
+
     // Create invitation
     const { data: invitation, error } = await this.fastify.supabase
       .from('workspace_invitations')
@@ -511,6 +538,9 @@ export class WorkspaceService {
         email,
         role,
         invited_by: invitedBy,
+        token,
+        status: 'pending',
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
       })
       .select()
       .single();
@@ -582,13 +612,33 @@ export class WorkspaceService {
       );
     }
 
-    // Add member
-    const member = await this.addMember(
-      invitation.workspace_id,
-      userId,
-      invitation.role as WorkspaceRole,
-      invitation.invited_by
-    );
+    // Add member (handle idempotency)
+    let member;
+    try {
+      member = await this.addMember(
+        invitation.workspace_id,
+        userId,
+        invitation.role as WorkspaceRole,
+        invitation.invited_by
+      );
+    } catch (error: any) {
+      // If user is already a member, just fetch them and proceed
+      if (error.statusCode === 409 || error.code === '409') { // Fastify error or code
+        const { data: existingMember } = await this.fastify.supabase
+          .from('workspace_members')
+          .select('*')
+          .eq('workspace_id', invitation.workspace_id)
+          .eq('user_id', userId)
+          .single();
+          
+        if (!existingMember) {
+           throw error; // Should not happen if 409, but safety check
+        }
+        member = existingMember;
+      } else {
+        throw error;
+      }
+    }
 
     // Mark invitation as accepted
     await this.fastify.supabase
@@ -743,30 +793,31 @@ export class WorkspaceService {
     return updated as WorkspaceMember;
   }
 
+
+
   /**
-   * Get workspace activity log
+   * Preview a workspace invitation by token
    */
-  async getActivity(
-    workspaceId: string,
-    options: { limit?: number; offset?: number } = {}
-  ): Promise<WorkspaceActivity[]> {
-    const limit = options.limit || 50;
-    const offset = options.offset || 0;
+  async previewInvitation(token: string): Promise<WorkspaceInvitation> {
+    const { data: invitation, error } = await this.fastify.supabase
+      .from('workspace_invitations')
+      .select('*, workspace:workspaces(name, slug), inviter:users!workspace_invitations_invited_by_fkey(full_name, email)')
+      .eq('token', token)
+      .single();
 
-    const { data, error } = await this.fastify.supabase
-      .from('workspace_activity_log')
-      .select('*')
-      .eq('workspace_id', workspaceId)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (error) {
-      throw this.fastify.httpErrors.internalServerError(
-        'Failed to fetch activity log'
-      );
+    if (error || !invitation) {
+      throw this.fastify.httpErrors.notFound('Invitation not found or invalid');
     }
 
-    return (data || []) as WorkspaceActivity[];
+    if (new Date(invitation.expires_at) < new Date()) {
+      throw this.fastify.httpErrors.gone('Invitation has expired');
+    }
+
+    if (invitation.status !== 'pending') {
+         throw this.fastify.httpErrors.conflict(`Invitation is ${invitation.status}`);
+    }
+
+    return invitation as WorkspaceInvitation;
   }
 
   /**
@@ -807,7 +858,7 @@ export class WorkspaceService {
 
     const { error } = await this.fastify.supabase
       .from('workspace_invitations')
-      .update({ status: 'revoked' })
+      .delete()
       .eq('id', invitationId)
       .eq('workspace_id', workspaceId);
 
@@ -815,6 +866,7 @@ export class WorkspaceService {
       throw this.fastify.httpErrors.internalServerError(
         'Failed to cancel invitation'
       );
+      
     }
 
     await this.logActivity(
@@ -825,5 +877,80 @@ export class WorkspaceService {
       invitationId,
       {}
     );
+  }
+
+  /**
+   * Get workspace activity log
+   */
+  async getActivity(
+    workspaceId: string,
+    options: { limit?: number; offset?: number } = {}
+  ): Promise<any[]> {
+    const limit = options.limit || 20;
+    const offset = options.offset || 0;
+
+    // Join with users table to get actor details
+    const { data: activityLog, error } = await this.fastify.supabase
+      .from('workspace_activity_log')
+      .select('*, actor:users(email, full_name, avatar_url)')
+      .eq('workspace_id', workspaceId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      this.fastify.log.error({ error, workspaceId }, 'Failed to fetch activity log');
+      throw this.fastify.httpErrors.internalServerError(
+        'Failed to fetch activity log'
+      );
+    }
+
+    return activityLog || [];
+  }
+
+  /**
+   * Check if user has a pending workspace
+   */
+  async hasPendingWorkspace(userId: string): Promise<Workspace | null> {
+    const { data } = await this.fastify.supabase
+      .from('workspaces')
+      .select('*')
+      .eq('owner_id', userId)
+      .eq('billing_status', 'pending')
+      .maybeSingle(); // Changed to maybeSingle to handle no result without error
+    
+    return data as Workspace | null;
+  }
+
+  /**
+   * Cleanup pending workspaces (mark as expired)
+   */
+  async cleanupPendingWorkspaces(): Promise<number> {
+    const now = new Date();
+
+    // Find pending workspaces that have expired
+    const { data: expiredWorkspaces, error: findError } = await this.fastify.supabase
+      .from('workspaces')
+      .select('id')
+      .eq('billing_status', 'pending')
+      .lt('expires_at', now.toISOString());
+
+    if (findError || !expiredWorkspaces?.length) {
+      return 0;
+    }
+
+    const ids = expiredWorkspaces.map(w => w.id);
+
+    // Mark them as expired
+    const { error: updateError, count } = await this.fastify.supabase
+      .from('workspaces')
+      .update({ billing_status: 'expired' })
+      .in('id', ids);
+
+    if (updateError) {
+      this.fastify.log.error({ error: updateError }, 'Failed to expire pending workspaces');
+      return 0;
+    }
+
+    return count || 0;
   }
 }

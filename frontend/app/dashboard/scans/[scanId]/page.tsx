@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useAuth } from "@/hooks/use-auth";
+import { useWorkspace } from "@/hooks/use-workspace";
 import { useRouter, useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -67,7 +67,7 @@ interface ScanDetail {
 }
 
 export default function ScanDetailPage() {
-  const { workspaceId } = useAuth();
+  const { workspaceId } = useWorkspace();
   const router = useRouter();
   const params = useParams();
   const scanId = params?.scanId as string;

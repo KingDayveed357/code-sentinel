@@ -31,8 +31,6 @@ export async function startScanController(
   const { repositoryId, branch, scanType } = request.body as { repositoryId: string; branch: string; scanType?: "quick" | "full" };
 
   const userId = request.supabaseUser?.id;
-  // Use workspace plan if available, otherwise fallback to user plan or Free
-  const plan = request.workspace?.plan || request.profile?.plan || 'Free';
 
   if (!userId) {
     throw fastify.httpErrors.unauthorized("User context missing");
@@ -42,7 +40,6 @@ export async function startScanController(
   const result = await services.startScan(
     workspaceId,
     userId,
-    plan,
     repositoryId,
     branch,
     scanType || "quick"

@@ -16,7 +16,6 @@ import { IntegrationsRepository } from "../integrations/repository";
 export async function importRepositories(
     fastify: FastifyInstance,
     workspaceId: string,
-    userPlan: string,
     repositories: RepositoryImportInput[],
     provider: "github" | "gitlab" | "bitbucket" = "github"
 ): Promise<{ success: boolean; imported: number; skipped: number; limit_reached: boolean }> {
@@ -25,7 +24,6 @@ export async function importRepositories(
         const validation = await validateRepositoryImport(
             fastify,
             workspaceId,
-            userPlan,
             repositories.length
         );
 
@@ -88,6 +86,12 @@ export async function importRepositories(
         };
     } catch (error: any) {
         fastify.log.error({ error, workspaceId, provider }, "Failed to import repositories");
+        
+        // If it's already an HTTP error (like our 403), re-throw it
+        if (error.statusCode) {
+            throw error;
+        }
+        
         throw fastify.httpErrors.internalServerError("Failed to import repositories");
     }
 }
@@ -539,27 +543,28 @@ export async function fetchGitHubReposForImport(
 export async function importRepositoriesWithLimits(
     fastify: FastifyInstance,
     workspaceId: string,
-    userPlan: string,
     repositories: RepositoryImportInput[],
     provider: "github" | "gitlab" | "bitbucket" = "github"
 ) {
     const result = await importRepositories(
         fastify,
         workspaceId,
-        userPlan,
         repositories,
         provider
     );
 
     // Get updated count and limits
     const repoCount = await getRepositoryCount(fastify, workspaceId);
-    const limits = getRepositoryLimits(userPlan);
+    
+    const entitlements = new EntitlementsService(fastify);
+    const usage = await entitlements.getWorkspaceUsage(workspaceId);
+    const limit = usage.limits.repositories ?? Infinity;
 
     return {
         ...result,
         repository_count: repoCount,
-        limit: limits.limit,
-        unlimited: limits.unlimited,
+        limit: limit,
+        unlimited: limit === Infinity,
     };
 }
 

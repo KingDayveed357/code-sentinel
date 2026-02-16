@@ -1,5 +1,8 @@
 // lib/routes/route-classifier.ts
 import type { Workspace } from '@/lib/api/workspaces';
+import {scansApi} from '@/lib/api/scans';
+import { repositoriesApi } from '@/lib/api/repositories';
+import { vulnerabilitiesApi } from '@/lib/api/vulnerabilities';
 
 type RouteType = 'workspace-safe' | 'workspace-dependent' | 'entity-dependent';
 
@@ -53,16 +56,20 @@ const ROUTE_DEFINITIONS: RouteDefinition[] = [
       if (!projectId) return false;
 
       try {
-        const project = await queryClient.fetchQuery({
+        await queryClient.fetchQuery({
           queryKey: ['workspace', workspace.id, 'project', projectId],
-          queryFn: () => 
-            fetch(`/api/projects/${projectId}?workspace=${workspace.id}`)
-              .then(r => r.json()),
-          staleTime: 5000,
+          queryFn: () =>  
+            repositoriesApi.getById(workspace.id, projectId),
+          retry: false, // Don't retry on 404s
         });
-        return project.workspace_id === workspace.id;
-      } catch {
-        return false;
+        return true;
+      } catch (error: any) {
+        // Strictly block if not found or access denied
+        if (error.status === 404 || error.status === 403 || error.status === 401) {
+          return false;
+        }
+        // Allow other errors (500, network) to pass through so the page can show a specific error
+        return true;
       }
     },
   },
@@ -75,23 +82,18 @@ const ROUTE_DEFINITIONS: RouteDefinition[] = [
       if (!scanId) return false;
 
       try {
-        // Fetch scan details to verify workspace ownership
-        const scan = await queryClient.fetchQuery({
+        await queryClient.fetchQuery({
           queryKey: ['workspace', workspace.id, 'scan', scanId],
           queryFn: () => 
-            fetch(`/api/scans/${scanId}?workspace=${workspace.id}`)
-              .then(res => {
-                if (!res.ok) throw new Error('Scan not found');
-                return res.json();
-              }),
+            scansApi.getById(workspace.id, scanId),
+          retry: false,
         });
-        
-        // Check if scan belongs to a project in this workspace
-        // Usually scan object has project_id or repository_id, and we trust backend validation
-        // But backend just returns 404 if not found in workspace, so scan fetch failing means invalid.
-        return !!scan;
-      } catch {
-        return false;
+        return true;
+      } catch (error: any) {
+        if (error.status === 404 || error.status === 403 || error.status === 401) {
+          return false;
+        }
+        return true;
       }
     },
   },
@@ -104,18 +106,18 @@ const ROUTE_DEFINITIONS: RouteDefinition[] = [
       if (!vulnId) return false;
 
       try {
-        const vuln = await queryClient.fetchQuery({
+        await queryClient.fetchQuery({
             queryKey: ['workspace', workspace.id, 'vulnerability', vulnId],
             queryFn: () =>
-                fetch(`/api/vulnerabilities/${vulnId}?workspace=${workspace.id}`)
-                    .then(res => {
-                        if (!res.ok) throw new Error('Vulnerability not found');
-                        return res.json();
-                    }),
+                vulnerabilitiesApi.getById(workspace.id, vulnId),
+            retry: false,
         });
-        return !!vuln;
-      } catch {
-        return false;
+        return true;
+      } catch (error: any) {
+        if (error.status === 404 || error.status === 403 || error.status === 401) {
+          return false;
+        }
+        return true;
       }
     },
   },

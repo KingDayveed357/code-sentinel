@@ -58,7 +58,8 @@ export default function CreateWorkspacePage() {
   const [slugError, setSlugError] = useState("")
 
   const userPlan = user?.plan || 'Free'
-  const canCreateTeam = ['Team', 'Enterprise'].includes(userPlan)
+  // Any user can create a team workspace (it starts a new billing subscription)
+  const canCreateTeam = true; 
 
   // Auto-generate slug from name
   const handleNameChange = (name: string) => {
@@ -154,13 +155,35 @@ export default function CreateWorkspacePage() {
     try {
       setCreating(true)
 
-      // Create workspace using hook (automatically updating list)
-      const workspace = await createWorkspace({
+      // Create workspace using API directly to access custom response fields
+      const response = await createWorkspace({
         name: workspaceName,
         type: 'team',
       })
 
-      // Invite members using API client
+      const workspace = response.workspace;
+
+      // Check if we need to redirect to checkout (for new team workspaces)
+      if (response.action === 'redirect_to_checkout' && response.checkoutUrl) {
+         toast({
+          title: "Redirecting to checkout...",
+          description: "Please complete the setup to activate your workspace.",
+        })
+        
+        // Short delay to show toast
+        setTimeout(() => {
+           window.location.href = response.checkoutUrl!;
+        }, 1500);
+        return; // Stop here, don't invite members or switch yet. Members should form pending invites or be handled post-activation. 
+        // Actually, invites are sent after creation. If pending, invites might fail or be queued. 
+        // We should probably NOT invite members here if payment is required.
+        // Members are handled after activation in the dashboard.
+      }
+
+
+      // Invite members if workspace is active immediately (or if we decide to allow invites for pending)
+      // For now, let's skip invites if pending and just redirect.
+      
       if (members.length > 0) {
         await Promise.all(
           members.map(member =>
@@ -228,20 +251,13 @@ export default function CreateWorkspacePage() {
           </p>
         </div>
 
-        {/* Upgrade Banner for Free/Dev Users */}
-        {!canCreateTeam && (
-          <Alert className="mb-6 border-primary bg-primary/5">
-            <Sparkles className="h-4 w-4 text-primary" />
-            <AlertDescription className="flex items-center justify-between">
-              <span>
-                <strong>Upgrade to Team plan</strong> to create team workspaces and collaborate with your team
-              </span>
-              <Button size="sm" className="ml-4">
-                Upgrade Now
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
+        {/* Info Banner */}
+        <Alert className="mb-6 border-blue-200 ">
+          <Info className="h-4 w-4 text-blue-500" />
+          <AlertDescription>
+            Creating a Team Workspace requires an active subscription. You will be redirected to a secure checkout page to complete the setup.
+          </AlertDescription>
+        </Alert>
 
         {/* Progress Steps */}
         <div className="flex items-center justify-center gap-4 mb-8">
@@ -462,9 +478,9 @@ export default function CreateWorkspacePage() {
                 )}
 
                 <Alert>
-                  <Info className="h-4 w-4" />
+                  <Sparkles className="h-4 w-4 text-primary" />
                   <AlertDescription>
-                    Your workspace will be created with your current plan: <strong>{userPlan}</strong>
+                    This will create a new <strong>Team Workspace</strong>. You will be redirected to complete the billing setup.
                   </AlertDescription>
                 </Alert>
 

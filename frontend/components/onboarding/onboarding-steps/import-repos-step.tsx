@@ -28,6 +28,7 @@ import {
 import { onboardingApi } from "@/lib/api/onboarding";
 import { authApi } from "@/lib/api/auth";
 import { useWorkspace } from "@/hooks/use-workspace";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 interface Repository {
@@ -249,7 +250,19 @@ export function ImportReposStep({ onNext, onSkip }: ImportReposStepProps) {
       onNext();
     } catch (err: any) {
       console.error("Failed to import repositories:", err);
-      setError(err.message || "Failed to import repositories");
+      const errorMessage = err.message || "Failed to import repositories";
+      
+      if (errorMessage.includes("Repository limit reached")) {
+        toast.error("Repository Limit Reached", {
+          description: errorMessage,
+          action: {
+            label: "Upgrade Plan",
+            onClick: () => window.location.href = "/dashboard/settings/billing",
+          },
+        });
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsImporting(false);
     }

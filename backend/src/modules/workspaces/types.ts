@@ -16,7 +16,11 @@ export interface Workspace {
   type: WorkspaceType;
   owner_id: string;
   plan: WorkspacePlan;
+  billing_status: 'none' | 'pending' | 'active' | 'expired';
+  subscription_provider?: string | null;
+  subscription_id?: string | null;
   settings: Record<string, any>;
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -5,10 +5,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase-client";
 import { authApi } from "@/lib/api/auth";
 import { Loader2 } from "lucide-react";
+import { acceptInvitation } from "@/lib/api/workspaces";
+import { toast } from "sonner";
+import { useAuth } from "@/hooks/use-auth";
 
 export default function OAuthCallbackPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { refreshWorkspaces } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("Authenticating...");
 
@@ -78,7 +82,41 @@ export default function OAuthCallbackPage() {
 
         console.log("User profile:", profile);
 
-        // 8. Redirect based on onboarding status
+        // 8. Handle Invite Acceptance (if present)
+        const inviteToken = searchParams.get("invite_token");
+        
+        if (inviteToken) {
+            setStatus("Accepting invitation...");
+            console.log("Found invite token, accepting...", inviteToken);
+            
+            try {
+                // Ensure auth state is synced before calling accept
+                await authApi.me(); 
+                
+                await acceptInvitation(inviteToken);
+                toast.success("Invitation accepted successfully!");
+                
+                // Refresh workspaces to include the new one
+                await refreshWorkspaces();
+                
+                // Redirect based on onboarding status
+                if (!profile?.onboarding_completed) {
+                  router.replace("/onboarding");
+                } else {
+                  router.replace("/dashboard");
+                }
+                return;
+                
+            } catch (inviteErr: any) {
+                console.error("Failed to auto-accept invite:", inviteErr);
+                toast.error("Account created, but failed to accept invite: " + inviteErr.message);
+                // Redirect to the invite page so they can try again manually or see the error
+                router.replace(`/accept-invite?token=${inviteToken}`);
+                return;
+            }
+        }
+
+        // 9. Redirect based on onboarding status
         if (!profile?.onboarding_completed) {
           console.log("Redirecting to onboarding");
           router.replace("/onboarding");

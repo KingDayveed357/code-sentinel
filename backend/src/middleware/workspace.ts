@@ -77,30 +77,39 @@ export async function resolveWorkspace(
              
             userRole = (membership.role as WorkspaceRole) || 'viewer';
              
-            // For team workspaces, ensure plan is synced with owner's plan
-            if (workspace.type === 'team' && workspace.owner_id) {
-                const { data: workspaceOwner } = await request.server.supabase
-                    .from('users')
-                    .select('plan')
-                    .eq('id', workspace.owner_id)
-                    .single();
-                 
-                if (workspaceOwner && workspaceOwner.plan !== workspace.plan) {
-                    // Sync workspace plan with owner's plan
-                    request.log.info({ 
-                        workspaceId, 
-                        oldPlan: workspace.plan, 
-                        newPlan: workspaceOwner.plan 
-                    }, "Syncing team workspace plan with owner's plan");
-                     
-                    await request.server.supabase
-                        .from('workspaces')
-                        .update({ plan: workspaceOwner.plan })
-                        .eq('id', workspaceId);
-                     
-                    workspace.plan = workspaceOwner.plan;
-                }
-            }
+            // For team workspaces, user plan matching is no longer needed since plans are workspace-centric.
+            // Logic removed.
+        }
+
+        if (workspace.type === 'team' && workspace.billing_status !== 'active') {
+             // Allow read-only access or specific endpoints? 
+             // Requirement: "Prevent accessing team features if billing_status !== active"
+             // Requirement: "Redirect to activation page if pending"
+             // For generic API access, we should throw 403 or 402.
+             // But valid use cases: fetching workspace to see status.
+             // So maybe we attach status and let specific route guards handle it?
+             // "Implement middleware or guards" -> We can add a specific guard for this.
+             // But user asked to "Prevent accessing team features". 
+             // Since this valid workspace resolution is used for ALL workspace routes, checking here might be too aggressive if we block getting the workspace itself.
+             // However, for most operations it should be blocked.
+             // I will add a property to request `workspaceBillingStatus` or just rely on `workspace` object.
+             // I'll add a check that throws if it is pending/expired, UNLESS it's a GET request to the workspace itself? 
+             // Actually, the requirements say "Implement middleware or guards". 
+             // I will modify `verifyWorkspaceAccess` or create `verifyBillingStatus` middleware if possible.
+             // Since I am editing `resolveWorkspace`, I'll just ensure the workspace object has the status.
+             // The workspace object already has it.
+             // I'll leave this function mostly as is but ensure `billing_status` is logged/checked.
+             
+             request.log.info({ workspaceId: workspace.id, status: workspace.billing_status }, "Resolved non-active team workspace");
+             
+             // If strictly pending, we might want to block here? 
+             // "Pending workspaces must NOT appear in switcher" -> Frontend logic.
+             // "Redirect to activation page if pending" -> Frontend logic based on API error or status.
+             
+             // If I block here, frontend can't fetch it to redirect.
+             // So I will NOT block here. I'll rely on a separate guard for specific routes or frontend handling.
+             // Wait, "Prevent accessing team features if billing_status !== active".
+             // This suggests a separate middleware.
         }
 
         request.workspace = workspace;
@@ -110,7 +119,8 @@ export async function resolveWorkspace(
             workspaceId: workspace.id, 
             type: workspace.type,
             role: userRole,
-            plan: workspace.plan
+            plan: workspace.plan,
+            billing_status: workspace.billing_status
         }, "Workspace resolved");
 
     } else {
@@ -132,7 +142,7 @@ export async function resolveWorkspace(
             // Workspace doesn't exist - create it
             const { data: user } = await request.server.supabase
                 .from('users')
-                .select('full_name, plan')
+                .select('full_name') // Plan no longer on user
                 .eq('id', userId)
                 .single();
 
@@ -146,7 +156,7 @@ export async function resolveWorkspace(
                     slug: workspaceSlug,
                     type: 'personal',
                     owner_id: userId,
-                    plan: user?.plan || 'Free', // Inherit user plan for personal workspace
+                    plan: 'Free', // Defaults to Free for new personal workspaces
                 })
                 .select()
                 .single();

@@ -8,6 +8,7 @@ import { repositoriesApi } from '@/lib/api/repositories';
 import { entitlementsApi } from '@/lib/api/entitlements';
 import { integrationsApi } from '@/lib/api/integrations';
 import { membersApi } from '@/lib/api/members';
+import { getActivity } from '@/lib/api/workspaces';
 import { useCallback } from 'react';
 
 /**
@@ -36,9 +37,31 @@ export const workspaceKeys = {
     [...workspaceKeys.all(workspaceId), 'members'] as const,
   invitations: (workspaceId: string) => 
     [...workspaceKeys.all(workspaceId), 'invitations'] as const,
+  activity: (workspaceId: string, limit: number = 20) => 
+    [...workspaceKeys.all(workspaceId), 'activity', limit] as const,
 };
 
 // ... (existing hooks)
+
+/**
+ * Hook to fetch workspace activity log
+ */
+export function useWorkspaceActivity(limit: number = 20) {
+  const workspace = useCurrentWorkspace();
+
+  return useQuery({
+    queryKey: workspace 
+      ? workspaceKeys.activity(workspace.id, limit) 
+      : ['activity', 'none'],
+    queryFn: async () => {
+      // console.log('📜 Fetching activity for workspace:', workspace?.name);
+      return getActivity(workspace!.id, { limit });
+    },
+    enabled: !!workspace,
+    staleTime: 10 * 1000, // 10 seconds (near real-time)
+    refetchInterval: 30 * 1000, // Poll every 30s
+  });
+}
 
 /**
  * Hook to fetch workspace members
@@ -58,7 +81,7 @@ export function useWorkspaceMembers() {
       ? workspaceKeys.members(workspace.id) 
       : ['members', 'none'],
     queryFn: async () => {
-      console.log('👥 Fetching members for workspace:', workspace?.name);
+      // console.log('👥 Fetching members for workspace:', workspace?.name);
       return membersApi.getMembers(workspace!.id);
     },
     enabled: !!workspace,
@@ -96,12 +119,12 @@ export function useDashboardOverview() {
   return useQuery({
     queryKey: workspace ? workspaceKeys.dashboard(workspace.id) : ['dashboard', 'none'],
     queryFn: () => {
-      console.log('📊 Fetching dashboard for workspace:', workspace?.name);
+      // console.log('📊 Fetching dashboard for workspace:', workspace?.name);
       return dashboardApi.getOverview();
     },
     enabled: !!workspace,
-    staleTime: 30 * 1000, // 30 seconds
-    refetchOnMount: 'always', // Always refetch when component mounts
+    staleTime: 60 * 1000, // 1 minute - allow caching during workspace switches
+    refetchOnMount: false, // Don't refetch on mount - rely on invalidation
   });
 }
 
@@ -123,12 +146,12 @@ export function useProjectsList(params?: {
       ? workspaceKeys.projectsList(workspace.id, params) 
       : ['projects', 'list', 'none'],
     queryFn: () => {
-      console.log('📦 Fetching projects for workspace:', workspace?.name, params);
+      // console.log('📦 Fetching projects for workspace:', workspace?.name, params);
       return repositoriesApi.list(workspace!.id, params || {});
     },
     enabled: !!workspace,
-    staleTime: 20 * 1000, // 20 seconds
-    refetchOnMount: true, // Refetch when component mounts
+    staleTime: 60 * 1000, // 1 minute
+    refetchOnMount: false, // Don't refetch on mount - rely on invalidation
     placeholderData: keepPreviousData, // For smooth pagination
   });
 }
@@ -145,8 +168,8 @@ export function useProjectDetail(projectId: string) {
       : ['projects', 'detail', projectId, 'none'],
     queryFn: () => repositoriesApi.getById(workspace!.id, projectId),
     enabled: !!workspace && !!projectId,
-    staleTime: 60 * 1000, // 1 minute
-    refetchOnMount: true,
+    staleTime: 2 * 60 * 1000, // 2 minutes
+    refetchOnMount: false,
   });
 }
 
@@ -177,12 +200,12 @@ export function useIntegrations() {
       ? workspaceKeys.integrations(workspace.id)
       : ['integrations', 'none'],
     queryFn: () => {
-      console.log('🔌 Fetching integrations for workspace:', workspace?.name);
+      // console.log('🔌 Fetching integrations for workspace:', workspace?.name);
       return integrationsApi.getIntegrations(workspace!.id);
     },
     enabled: !!workspace,
-    staleTime: 30 * 1000, // 30 seconds
-    refetchOnMount: 'always',
+    staleTime: 2 * 60 * 1000, // 2 minutes
+    refetchOnMount: false,
   });
 }
 
@@ -212,7 +235,7 @@ export function usePrefetchWorkspace() {
 
   return useCallback(
     async (workspaceId: string) => {
-      console.log('⚡ Prefetching workspace data:', workspaceId);
+      // console.log('⚡ Prefetching workspace data:', workspaceId);
       await Promise.allSettled([
         queryClient.prefetchQuery({
           queryKey: workspaceKeys.dashboard(workspaceId),
@@ -244,12 +267,12 @@ export function useGitHubRepositories() {
       ? workspaceKeys.githubRepos(workspace.id)
       : ['github', 'repositories', 'none'],
     queryFn: async () => {
-      console.log('📦 Fetching GitHub repositories for workspace:', workspace?.name);
+      // console.log('📦 Fetching GitHub repositories for workspace:', workspace?.name);
       return repositoriesApi.getGitHubRepos(workspace!.id);
     },
     enabled: !!workspace,
-    staleTime: 30 * 1000, // 30 seconds
-    refetchOnMount: 'always',
+    staleTime: 5 * 60 * 1000, // 5 minutes - GitHub repos don't change often
+    refetchOnMount: false,
   });
 }
 
@@ -265,11 +288,11 @@ export function useGitHubIntegrationStatus() {
       ? workspaceKeys.githubStatus(workspace.id)
       : ['github', 'integration-status', 'none'],
     queryFn: async () => {
-      console.log('🔌 Fetching GitHub integration status for workspace:', workspace?.name);
+      // console.log('🔌 Fetching GitHub integration status for workspace:', workspace?.name);
       return integrationsApi.getIntegrationStatus(workspace!.id, 'github');
     },
     enabled: !!workspace,
-    staleTime: 60 * 1000, // 1 minute
-    refetchOnMount: 'always',
+    staleTime: 2 * 60 * 1000, // 2 minutes
+    refetchOnMount: false,
   });
 }
