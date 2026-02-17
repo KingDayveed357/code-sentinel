@@ -96,10 +96,7 @@ export default function ScanDetailPage() {
 
     // ✅ FIX: Set up polling based on current scan status
     // This will be re-evaluated when scan changes
-    const isRunning = scan?.status === "running" || 
-                      scan?.status === "pending" || 
-                      scan?.status === "normalizing" ||
-                      scan?.status === "ai_enriching";
+    const isRunning = scan?.status === "processing" || scan?.status === "queued";
     
     let pollInterval: NodeJS.Timeout | null = null;
     if (isRunning) {
@@ -154,7 +151,7 @@ export default function ScanDetailPage() {
     );
   }
 
-  const isRunning = scan.status === "running" || scan.status === "pending" || scan.status === "normalizing";
+  const isRunning = scan.status === "processing" || scan.status === "queued";
   const totalFindings = scan.vulnerabilities_found || 0;
   const hasFindings = totalFindings > 0;
 
@@ -170,25 +167,16 @@ export default function ScanDetailPage() {
           textColor: "text-green-700",
           label: "Completed",
         };
-      case "running":
+      case "processing":
         return {
           icon: Loader2,
           iconColor: "text-blue-600 animate-spin",
           bgColor: "bg-blue-50",
           borderColor: "border-blue-200",
           textColor: "text-blue-700",
-          label: "Running",
+          label: "Processing",
         };
-      case "normalizing":
-        return {
-          icon: Loader2,
-          iconColor: "text-purple-600 animate-spin",
-          bgColor: "bg-purple-50",
-          borderColor: "border-purple-200",
-          textColor: "text-purple-700",
-          label: "Finalizing",
-        };
-      case "pending":
+      case "queued":
         return {
           icon: Clock,
           iconColor: "text-amber-600",
