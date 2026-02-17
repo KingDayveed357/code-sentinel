@@ -1,6 +1,7 @@
 // components/dashboard/project-detail.tsx
 "use client";
 
+import { useState } from 'react';
 import { useWorkspace } from "@/hooks/use-workspace";
 import { workspaceKeys } from "@/hooks/use-dashboard-data";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -33,6 +34,7 @@ import { vulnerabilitiesApi } from "@/lib/api/vulnerabilities";
 import type { Repository } from "@/lib/api/repositories";
 import type { Scan } from "@/lib/api/scans";
 import type { Vulnerability } from "@/lib/api/vulnerabilities";
+import { RunScanModal } from "@/components/scans/run-scan-modal";
 import { toast } from "sonner";
 
 
@@ -103,40 +105,17 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
   const vulnsError = (vulnsErrorObj as Error)?.message || null;
 
-  // Mutation for starting scan
-  const startScanMutation = useMutation({
-    mutationFn: async () => {
-        if (!workspace || !project) return;
-        return scansApi.start(workspace.id, projectId, {
-            branch: project.default_branch,
-            scan_type: "full",
-        });
-    },
-    onSuccess: () => {
-        toast.success(
-            <div>
-              <strong>Scan started</strong>
-              <p>Scanning {project?.name}... Check the banner above for progress.</p>
-            </div>
-        );
-        // Invalidate queries to refresh data
-        queryClient.invalidateQueries({ queryKey: ['workspace', workspace?.id, 'scans'] });
-        setTimeout(() => refetchScans(), 2000); // Polling simulation
-    },
-    onError: (err: any) => {
-        toast.error(
-            <div>
-              <strong>Failed to start scan</strong>
-              <p className="text-sm">{err.message || "An error occurred"}</p>
-            </div>
-        );
-    }
-  });
+  const [scanModalOpen, setScanModalOpen] = useState(false);
 
   const handleRunScan = () => {
-      startScanMutation.mutate();
+    setScanModalOpen(true);
   };
-  const isScanning = startScanMutation.isPending;
+
+  const handleScanStarted = () => {
+    // Invalidate queries to refresh data
+    queryClient.invalidateQueries({ queryKey: ['workspace', workspace?.id, 'scans'] });
+    setTimeout(() => refetchScans(), 2000);
+  };
 
 
   const calculateRiskScore = (scan: Scan | null | undefined): number => {
@@ -167,25 +146,15 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
   const getScanStatusBadge = (status: Scan["status"]) => {
     const config = {
-      pending: {
-        label: "Pending",
+      queued: {
+        label: "Queued",
         icon: Clock,
-        className: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-400",
-      },
-      running: {
-        label: "Running",
-        icon: Activity,
-        className: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-400 animate-pulse",
-      },
-      normalizing: {
-        label: "Processing",
-        icon: Activity,
         className: "bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-400",
       },
-      ai_enriching: {
-        label: "AI Analysis",
-        icon: Zap,
-        className: "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-400",
+      processing: {
+        label: "Processing",
+        icon: Activity,
+        className: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-400 animate-pulse",
       },
       completed: {
         label: "Completed",
@@ -197,13 +166,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         icon: XCircle,
         className: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-400",
       },
-      cancelled: {
-        label: "Cancelled",
-        icon: XCircle,
-        className: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400",
-      },
     };
-    return config[status] || config.pending;
+    return config[status] || config.queued;
   };
 
   const formatDate = (dateString: string | null) => {
@@ -299,20 +263,10 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             </Link>
           </Button>
           <Button 
-            onClick={handleRunScan} 
-            disabled={isScanning}
+            onClick={handleRunScan}
           >
-            {isScanning ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Scanning...
-              </>
-            ) : (
-              <>
-                <Zap className="mr-2 h-4 w-4" />
-                Run Scan
-              </>
-            )}
+            <Zap className="mr-2 h-4 w-4" />
+            Run Scan
           </Button>
         </div>
       </div>
@@ -464,8 +418,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               <Activity className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
               <p className="text-sm text-muted-foreground mb-4">No scans yet</p>
               <Button 
-                onClick={handleRunScan} 
-                disabled={isScanning}
+                onClick={handleRunScan}
               >
                 <Zap className="mr-2 h-4 w-4" />
                 Run First Scan
@@ -485,7 +438,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                   >
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <StatusIcon className={`h-4 w-4 ${scan.status === 'running' ? 'animate-pulse' : ''}`} />
+                        <StatusIcon className={`h-4 w-4 ${scan.status === 'processing' ? 'animate-pulse' : ''}`} />
                         <Badge className={getScanStatusBadge(scan.status).className}>
                           {getScanStatusBadge(scan.status).label}
                         </Badge> 
@@ -570,27 +523,17 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               <p className="text-sm font-medium text-foreground mb-1">Run a scan to view vulnerabilities</p>
               <p className="text-xs text-muted-foreground mb-4">Start your first security scan to see results here</p>
               <Button 
-                onClick={handleRunScan} 
-                disabled={isScanning}
+                onClick={handleRunScan}
                 size="sm"
               >
-                {isScanning ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Scanning...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="mr-2 h-4 w-4" />
-                    Run Scan
-                  </>
-                )}
+                <Zap className="mr-2 h-4 w-4" />
+                Run Scan
               </Button>
             </div>
           )}
 
           {/* State B: Scan in progress */}
-          {latestScan && (latestScan.status === "running" || latestScan.status === "pending" || latestScan.status === "normalizing" || latestScan.status === "ai_enriching") && (
+          {latestScan && (latestScan.status === "processing" || latestScan.status === "queued") && (
             <div className="text-center py-8">
               <Loader2 className="h-12 w-12 text-blue-600 animate-spin mx-auto mb-3" />
               <p className="text-sm font-medium text-foreground mb-1">Scanning in progress...</p>
@@ -605,22 +548,12 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               <p className="text-sm font-medium text-foreground mb-1">Scan failed</p>
               <p className="text-xs text-muted-foreground mb-4">The scan encountered an error. Please try again.</p>
               <Button 
-                onClick={handleRunScan} 
-                disabled={isScanning}
+                onClick={handleRunScan}
                 size="sm"
                 variant="outline"
               >
-                {isScanning ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Scanning...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="mr-2 h-4 w-4" />
-                    Retry Scan
-                  </>
-                )}
+                <Zap className="mr-2 h-4 w-4" />
+                Retry Scan
               </Button>
             </div>
           )}
@@ -702,6 +635,20 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Run Scan Modal */}
+      {project && workspace && (
+        <RunScanModal
+          open={scanModalOpen}
+          onOpenChange={setScanModalOpen}
+          repositoryId={project.id}
+          repositoryName={project.name}
+          defaultBranch={project.default_branch}
+          workspaceId={workspace.id}
+          userPlan="free" // TODO: Get from workspace/user context
+          onScanStarted={handleScanStarted}
+        />
+      )}
     </div>
   );
 }

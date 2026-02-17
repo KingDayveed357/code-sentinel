@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useProgressRouter as useRouter } from '@/hooks/use-progress-router';
 import { useWorkspace } from '@/hooks/use-workspace';
+import { useWorkspaceStore } from '@/stores/workspace-store';
 import { classifyRoute } from '@/lib/routes/route-classifier';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -18,12 +19,16 @@ import { AnimatePresence, motion } from 'framer-motion';
  * 2. Uses progressive loading overlay instead of full-page block
  * 3. Gracefully handles workspace validation
  * 4. Provides clear visual feedback during transitions
+ * 5. Prevents infinite loops on workspace switch
  */
 export function WorkspaceRouteGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { workspace, isSwitching, initializing } = useWorkspace();
+  const { workspace, initializing } = useWorkspace();
   const queryClient = useQueryClient();
+  
+  // ✅ FIX: Get lifecycle state from store
+  const lifecycleState = useWorkspaceStore((state) => state.lifecycleState);
   
   // Track the last active workspace ID to detect switches
   const [lastWorkspaceId, setLastWorkspaceId] = useState<string | null>(null);
@@ -35,12 +40,15 @@ export function WorkspaceRouteGuard({ children }: { children: React.ReactNode })
   // This prevents flashing "old route + new workspace" content
   const isWorkspaceMismatch = lastWorkspaceId !== null && workspace?.id && lastWorkspaceId !== workspace.id;
 
-  // Combined loading state
-  const isLoading = initializing || isSwitching || isValidating || isWorkspaceMismatch;
+  // ✅ FIX: Only block UI during initializing and switching, NOT during validating
+  const isLoading = lifecycleState === "initializing" || lifecycleState === "switching" || isWorkspaceMismatch;
+
+  // Instrumentation: render log
+  console.log('WorkspaceRouteGuard render', { pathname, isLoading, lifecycleState, workspaceId: workspace?.id });
 
   useEffect(() => {
     // 1. Guard clauses
-    if (!workspace || initializing || isSwitching) return;
+    if (!workspace || initializing || lifecycleState === "switching") return;
 
     const currentWsId = workspace.id;
     const route = classifyRoute(pathname);
@@ -53,26 +61,39 @@ export function WorkspaceRouteGuard({ children }: { children: React.ReactNode })
     // 3. Detect Workspace Switch
     else if (lastWorkspaceId !== currentWsId) {
         // Workspace changed!
+        console.log('🔄 WorkspaceRouteGuard: Workspace switch detected', { 
+          from: lastWorkspaceId, 
+          to: currentWsId, 
+          routeType: route.type,
+          pathname 
+        });
+        
+        // ✅ FIX: Update tracker IMMEDIATELY to prevent re-triggering
+        setLastWorkspaceId(currentWsId);
         
         if (route.type === 'entity-dependent') {
              const redirectPath = route.redirectOnInvalid || '/dashboard';
+             
+             console.log('🔄 WorkspaceRouteGuard: Redirecting from entity route', { 
+               from: pathname, 
+               to: redirectPath 
+             });
              
              // CRITICAL: Immediate Redirect - Do not validate
              router.replace(redirectPath);
              
              toast.warning("Workspace changed", {
-                 description: "The resource you were viewing belongs to a different workspace. You’ve been redirected.",
+                 description: "The resource you were viewing belongs to a different workspace. You've been redirected.",
                  duration: 4000,
              });
              
-             // Determine we are redirecting, so stop here
+             // ✅ FIX: Return early, do NOT run validation
              return;
-        } else {
-             // For safe routes, just accept the new workspace
-             setLastWorkspaceId(currentWsId);
-             // We can proceed to let standard validation logic run (or skip) below
-             // but usually safe routes don't 'requireValidation'.
         }
+        
+        // ✅ FIX: For safe routes after workspace switch, skip validation entirely
+        // Workspace is already updated above, just return
+        return;
     }
 
     // 4. Standard Validation Logic
@@ -84,41 +105,70 @@ export function WorkspaceRouteGuard({ children }: { children: React.ReactNode })
       return;
     }
 
-    // Start validation for entity routes
+    // Start validation for entity routes, but avoid validating while tab is hidden
     let active = true;
-    setIsValidating(true);
+    let visibilityListener: (() => void) | null = null;
 
-    const validate = async () => {
+    const runValidation = async () => {
+      if (!active) return;
+      console.log('WorkspaceRouteGuard: starting validation', { pathname, workspaceId: workspace.id });
+      setIsValidating(true);
+
       try {
         const isValid = await route.requiresValidation!(pathname, workspace, queryClient);
-        
-        if (!active) return; 
+
+        if (!active) return;
 
         if (!isValid) {
-           const redirectPath = route.redirectOnInvalid || '/dashboard';
-           
-           router.replace(redirectPath);
-           
-           toast.error('Access Denied', {
-             description: 'You do not have permission to view this resource.',
-             duration: 4000,
-           });
+          const redirectPath = route.redirectOnInvalid || '/dashboard';
+          router.replace(redirectPath);
+          toast.error('Access Denied', {
+            description: 'You do not have permission to view this resource.',
+            duration: 4000,
+          });
         }
       } catch (err: any) {
-         console.error("Route validation error:", err);
+        console.error('Route validation error:', err);
+        // ✅ FIX: On validation error (e.g., entity not found), redirect to safe route
+        const redirectPath = route.redirectOnInvalid || '/dashboard';
+        if (active) {
+          router.replace(redirectPath);
+          toast.error('Resource not found', {
+            description: 'The resource you are trying to access does not exist or has been moved.',
+            duration: 4000,
+          });
+        }
       } finally {
-         if (active) {
-            setIsValidating(false);
-         }
+        if (active) {
+          setIsValidating(false);
+          console.log('WorkspaceRouteGuard: finished validation', { pathname, workspaceId: workspace.id });
+        }
       }
     };
 
-    validate();
+    // If the document is hidden (tab switched), defer validation until visible to avoid transient loading
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      console.log('WorkspaceRouteGuard: document hidden, deferring validation');
+      visibilityListener = () => {
+        if (document.visibilityState === 'visible' && active) {
+          runValidation();
+        }
+      };
+      document.addEventListener('visibilitychange', visibilityListener);
+    } else {
+      // small debounce to avoid racing on quick navigation
+      const t = window.setTimeout(() => runValidation(), 80);
+      // ensure we clear timeout on cleanup
+      visibilityListener = () => clearTimeout(t);
+    }
 
     return () => {
       active = false;
+      if (visibilityListener && typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', visibilityListener as EventListener);
+      }
     };
-  }, [pathname, workspace?.id, isSwitching, initializing, queryClient, router, lastWorkspaceId]);
+  }, [pathname, workspace?.id, lifecycleState, initializing, queryClient, router, lastWorkspaceId]);
 
   return (
     <div className="relative min-h-[calc(100vh-4rem)]">

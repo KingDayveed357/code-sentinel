@@ -19,6 +19,7 @@ const envSchema = z.object({
     // STRIPE_SECRET_KEY: z.string().optional(),
     // PAYSTACK_SECRET_KEY: z.string().optional(),
     // OPENAI_API_KEY: z.string().optional(),
+    GROQ_API_KEY: z.string().optional(),    
     GEMINI_API_KEY: z.string().optional(),
     ANTHROPIC_API_KEY: z.string().optional(),
     SEMGREP_API_KEY: z.string().optional(),

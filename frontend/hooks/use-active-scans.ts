@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { scansApi } from "@/lib/api/scans";
 
 export interface ActiveScan {
   id: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "processing" | "completed" | "failed";
   repository: {
     id: string;
     name: string;
@@ -13,9 +13,25 @@ export interface ActiveScan {
   created_at: string;
   completed_at: string | null;
   error_message: string | null;
-  progress?: number;
+  progress_percentage: number | null;
+  progress_stage: string | null;
 }
 
+/**
+ * ✅ WORKSPACE-GLOBAL SCAN STORE
+ * 
+ * This hook provides workspace-scoped active scan tracking with:
+ * - Automatic polling while scans are active
+ * - Smart polling lifecycle (stops when no active scans)
+ * - Session-based dismissal
+ * - Recently completed scan visibility (30s window)
+ * 
+ * Architecture:
+ * - Queries for canonical statuses: queued, processing
+ * - Shows recently completed/failed scans briefly
+ * - Polls every 3 seconds when active scans exist
+ * - Stops polling when all scans complete
+ */
 export function useActiveScans() {
   const { workspace } = useWorkspace();
   const workspaceId = workspace?.id;
@@ -33,25 +49,25 @@ export function useActiveScans() {
     }
   }, []);
 
-  const { data: activeScans = [] } = useQuery({
+  const { data: activeScans = [], refetch } = useQuery({
     queryKey: ['active-scans', workspaceId],
     queryFn: async () => {
       if (!workspaceId) return [];
       
       try {
-        // Fetch running and pending scans separately
-        const [runningResult, pendingResult] = await Promise.all([
+        // ✅ FIX: Query for canonical statuses
+        const [processingResult, queuedResult] = await Promise.all([
           scansApi.getAll(workspaceId, {
-            page: 1, limit: 10, status: "running",
+            page: 1, limit: 10, status: "processing",
           }).catch(() => ({ data: [], meta: { total: 0 } })),
           scansApi.getAll(workspaceId, {
-            page: 1, limit: 10, status: "pending",
+            page: 1, limit: 10, status: "queued",
           }).catch(() => ({ data: [], meta: { total: 0 } })),
         ]);
 
         const activeScansData = [
-          ...(runningResult.data || []),
-          ...(pendingResult.data || []),
+          ...(processingResult.data || []),
+          ...(queuedResult.data || []),
         ];
 
         // Also check for recently completed/failed scans (last 30 seconds)
@@ -80,7 +96,7 @@ export function useActiveScans() {
         combined.forEach(s => uniqueMap.set(s.id, s));
         const unique = Array.from(uniqueMap.values());
 
-        // Map to ActiveScan interface
+        // Map to ActiveScan interface with progress data
         return unique.map((scan: any) => ({
           id: scan.id,
           status: scan.status,
@@ -91,7 +107,8 @@ export function useActiveScans() {
           created_at: scan.created_at,
           completed_at: scan.completed_at,
           error_message: scan.error_message,
-          progress: scan.progress_percentage ?? undefined,
+          progress_percentage: scan.progress_percentage ?? null,
+          progress_stage: scan.progress_stage ?? null,
         }));
       } catch (error) {
         console.error("Failed to fetch active scans:", error);
@@ -99,7 +116,15 @@ export function useActiveScans() {
       }
     },
     enabled: !!workspaceId,
-    refetchInterval: 5000,
+    // ✅ SMART POLLING: Poll every 3 seconds when enabled
+    refetchInterval: (data) => {
+      // Stop polling if no active scans (only completed/failed)
+      // ✅ FIX: Be defensive - `data` may unexpectedly be a non-array (cache shape, errors, undefined)
+      const hasActiveScans = Array.isArray(data)
+        ? data.some((scan) => scan.status === "processing" || scan.status === "queued")
+        : false;
+      return hasActiveScans ? 3000 : false;
+    },
     staleTime: 1000, // Keep data fresh
   });
 
@@ -124,6 +149,7 @@ export function useActiveScans() {
     activeScans: visibleScans,
     dismissScan,
     clearDismissed,
+    refetch, // Expose refetch for manual refresh
   };
 }
 

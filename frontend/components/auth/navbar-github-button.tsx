@@ -40,7 +40,11 @@ export function NavbarGithubButton() {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  const isLoading = loading || profileLoading;
+  // Avoid flicker for already-authenticated users during background profile revalidation
+  const isLoading = loading || (profileLoading && !user);
+
+  // Instrumentation: render
+  console.log('NavbarGithubButton render', { isLoading, user: user?.id });
 
   // Handle GitHub Sign In
   const handleSignIn = async () => {

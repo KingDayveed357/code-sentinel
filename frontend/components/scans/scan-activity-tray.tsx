@@ -40,17 +40,16 @@ export function ScanActivityTray() {
   const sortedScans = useMemo(() => {
     return [...visibleScans].sort((a, b) => {
       const priority: Record<string, number> = {
-        running: 0,
-        pending: 1,
+        processing: 0,
+        queued: 1,
         completed: 2,
         failed: 2,
-        cancelled: 3,
       };
       return (priority[a.status] || 4) - (priority[b.status] || 4);
     });
   }, [visibleScans]);
 
-  const runningScans = sortedScans.filter((s) => s.status === "running");
+  const processingScans = sortedScans.filter((s) => s.status === "processing");
   const completedScans = sortedScans.filter((s) => s.status === "completed");
   const failedScans = sortedScans.filter((s) => s.status === "failed");
 
@@ -66,12 +65,11 @@ export function ScanActivityTray() {
       case "completed":
         return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
       case "failed":
-      case "cancelled":
         return <AlertCircle className="h-4 w-4 text-destructive" />;
-      case "running":
+      case "processing":
         return <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />;
-      case "normalizing":
-        return <Loader2 className="h-4 w-4 text-purple-500 animate-spin" />;
+      case "queued":
+        return <Activity className="h-4 w-4 text-yellow-500" />;
       default:
         return <Activity className="h-4 w-4 text-muted-foreground" />;
     }
@@ -80,20 +78,16 @@ export function ScanActivityTray() {
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       completed: "default",
-      running: "secondary",
-      normalizing: "secondary",
+      processing: "secondary",
+      queued: "outline",
       failed: "destructive",
-      pending: "outline",
-      cancelled: "outline",
     };
 
     const labels: Record<string, string> = {
-      running: "Running",
-      normalizing: "Finalizing",
-      pending: "Queued",
+      processing: "Processing",
+      queued: "Queued",
       completed: "Done",
       failed: "Failed",
-      cancelled: "Cancelled",
     };
 
     return (
@@ -114,12 +108,12 @@ export function ScanActivityTray() {
           <div className="flex items-center gap-2">
             <Activity className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm font-medium">
-              {runningScans.length > 0 && (
+              {processingScans.length > 0 && (
                 <span className="text-blue-600 dark:text-blue-400">
-                  {runningScans.length} running
+                  {processingScans.length} processing
                 </span>
               )}
-              {runningScans.length > 0 && (completedScans.length > 0 || failedScans.length > 0) && " • "}
+              {processingScans.length > 0 && (completedScans.length > 0 || failedScans.length > 0) && " • "}
               {completedScans.length > 0 && (
                 <span className="text-emerald-600 dark:text-emerald-400">
                   {completedScans.length} completed
@@ -131,7 +125,7 @@ export function ScanActivityTray() {
                   {failedScans.length} failed
                 </span>
               )}
-              {runningScans.length === 0 && completedScans.length === 0 && failedScans.length === 0 && (
+              {processingScans.length === 0 && completedScans.length === 0 && failedScans.length === 0 && (
                 <span className="text-muted-foreground">{visibleScans.length} scan{visibleScans.length !== 1 ? "s" : ""}</span>
               )}
             </span>
@@ -150,9 +144,9 @@ export function ScanActivityTray() {
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">Scan Activity</h3>
-          {runningScans.length > 0 && (
+          {processingScans.length > 0 && (
             <Badge variant="secondary" className="text-xs">
-              {runningScans.length} active
+              {processingScans.length} active
             </Badge>
           )}
         </div>
@@ -173,7 +167,7 @@ export function ScanActivityTray() {
             key={scan.id}
             className={cn(
               "relative group overflow-hidden rounded-lg border transition-all",
-              scan.status === "running"
+              scan.status === "processing"
                 ? "border-blue-200 dark:border-blue-900/50 bg-gradient-to-r from-blue-50/50 to-transparent dark:from-blue-950/30"
                 : scan.status === "completed"
                   ? "border-emerald-200 dark:border-emerald-900/50 bg-gradient-to-r from-emerald-50/50 to-transparent dark:from-emerald-950/30"
@@ -182,7 +176,7 @@ export function ScanActivityTray() {
                     : "border-muted-foreground/20 bg-card/50"
             )}
           >
-            {scan.status === "running" && (
+            {scan.status === "processing" && (
               <div className="absolute inset-0 bg-gradient-to-r from-blue-400/0 via-blue-400/5 to-blue-400/0 animate-pulse pointer-events-none" />
             )}
 
@@ -201,22 +195,20 @@ export function ScanActivityTray() {
                   </div>
                 </div>
 
-                {/* Progress bar for running/normalizing scans */}
-                {(scan.status === "running" || scan.status === "normalizing" || scan.status === "pending") && scan.progress !== undefined && (
+                {/* Progress bar for processing/queued scans */}
+                {(scan.status === "processing" || scan.status === "queued") && scan.progress_percentage !== null && (
                   <div className="space-y-1">
-                    <Progress value={scan.progress} className="h-1.5 bg-muted" />
+                    <Progress value={scan.progress_percentage} className="h-1.5 bg-muted" />
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-muted-foreground">
-                        {Math.round(scan.progress)}% complete
+                        {Math.round(scan.progress_percentage)}% complete
                       </span>
                       <span className="text-xs text-muted-foreground opacity-75">
-                        {scan.status === "normalizing" 
-                          ? "Finalizing..." 
-                          : scan.status === "pending" 
-                            ? "Queued..." 
-                            : scan.progress >= 100 
-                              ? "Finalizing..." 
-                              : "Analyzing..."}
+                        {scan.progress_stage || (scan.status === "queued" 
+                          ? "Queued..." 
+                          : scan.progress_percentage >= 100 
+                            ? "Finalizing..." 
+                            : "Analyzing...")}
                       </span>
                     </div>
                   </div>
@@ -233,7 +225,7 @@ export function ScanActivityTray() {
                     {scan.error_message || "Scan failed"}
                   </span>
                 )}
-                {scan.status === "pending" && (
+                {scan.status === "queued" && (
                   <span className="text-xs text-muted-foreground">
                     Queued and waiting to start
                   </span>
@@ -262,7 +254,7 @@ export function ScanActivityTray() {
                   className="gap-1.5 text-xs font-medium h-7"
                 >
                   <span>
-                    {scan.status === "running"
+                    {scan.status === "processing"
                       ? "View"
                       : scan.status === "completed"
                         ? "Review"
@@ -277,11 +269,11 @@ export function ScanActivityTray() {
       </div>
 
       {/* Footer summary */}
-      {runningScans.length > 0 && (
+      {processingScans.length > 0 && (
         <div className="flex items-center gap-2 px-2 py-1.5 rounded bg-muted/40 text-xs text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
           <span>
-            {runningScans.length} scan{runningScans.length !== 1 ? "s" : ""} in progress
+            {processingScans.length} scan{processingScans.length !== 1 ? "s" : ""} in progress
             {completedScans.length > 0 && ` • ${completedScans.length} completed`}
             {failedScans.length > 0 && ` • ${failedScans.length} failed`}
           </span>

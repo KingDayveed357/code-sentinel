@@ -58,7 +58,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const mountedRef = useRef(true);
   
   // Use centralized workspace store
-  const { setWorkspace: setWorkspaceInStore, setWorkspaces, setInitializing } = useWorkspaceStore();
+  const { setWorkspace: setWorkspaceInStore, setWorkspaces, setInitializing, startValidating, finishValidating } = useWorkspaceStore();
+
+  // Instrumentation: mount log
+  useEffect(() => {
+    console.log("AuthProvider mounted");
+  }, []);
 
   // Fetch profile from backend
   const fetchUserProfile = useCallback(async (accessToken?: string) => {
@@ -74,9 +79,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Fetch and initialize workspaces
-  const fetchAndInitWorkspaces = useCallback(async (force = false) => {
+  const fetchAndInitWorkspaces = useCallback(async (isInitialLoad = false) => {
     if (!mountedRef.current) return;
-    setInitializing(true);
+    
+    // ✅ FIX: Use different lifecycle methods for initial vs background refresh
+    if (isInitialLoad) {
+      // First load: use setInitializing
+      setInitializing(true);
+    } else {
+      // Background refresh: use startValidating (doesn't block UI)
+      startValidating();
+    }
     
     try {
       // 1. Fetch all accessible workspaces first
@@ -118,10 +131,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('❌ Workspace initialization failed:', error);
     } finally {
       if (mountedRef.current) {
-        setInitializing(false);
+        if (isInitialLoad) {
+          setInitializing(false);
+        } else {
+          finishValidating();
+        }
       }
     }
-  }, [setWorkspaceInStore, setWorkspaces, setInitializing]);
+  }, [setWorkspaceInStore, setWorkspaces, setInitializing, startValidating, finishValidating]);
 
   // Refresh user public method
   const refreshUser = useCallback(async () => {
@@ -200,7 +217,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } 
         
         // Step 2: Initialize Workspace using reusable function
-        await fetchAndInitWorkspaces();
+        await fetchAndInitWorkspaces(true); // ✅ FIX: Mark as initial load
 
         // Step 3: Clean up OAuth token from URL (if present)
         const urlParams = new URLSearchParams(window.location.search);
@@ -228,13 +245,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data } = supabase.auth.onAuthStateChange((event, newSession) => {
       if (event === "INITIAL_SESSION" || isNavigatingRef.current) return;
 
-      setSession(newSession ?? null);
-
-      if (!newSession?.access_token) {
+      // Only treat explicit sign-out events as unauthenticated.
+      // Sometimes the provider emits transient nulls during token refresh; ignore those.
+      if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
+        setSession(null);
         setUser(null);
         setProfileLoading(false);
         return;
       }
+
+      if (!newSession?.access_token) {
+        // Ignore transient missing session for background token refresh
+        console.log('AuthProvider: transient missing session received, ignoring', { event });
+        return;
+      }
+
+      setSession(newSession);
 
       // Debounce profile fetch
       if (profileFetchTimerRef.current) clearTimeout(profileFetchTimerRef.current);
@@ -242,12 +268,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfileLoading(true);
         const profile = await fetchUserProfile(newSession.access_token);
         if (!mountedRef.current) return;
-        
+
         if (profile) setUser(profile);
         setProfileLoading(false);
 
         // Important: Re-fetch workspaces on session change (e.g. login)
-        await fetchAndInitWorkspaces();
+        await fetchAndInitWorkspaces(false); // ✅ FIX: Background refresh, don't block UI
       }, 300);
     });
 

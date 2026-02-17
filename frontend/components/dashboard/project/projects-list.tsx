@@ -50,6 +50,7 @@ import { useWorkspaceChangeListener } from "@/hooks/use-workspace-change-listene
 import { workspaceKeys } from "@/hooks/use-dashboard-data";
 import { ProjectCardSkeleton, ProjectsHeaderSkeleton } from "./projects-skeleton";
 import { ScanStatusBadge } from "@/components/scans/scan-status-badge";
+import { RunScanModal } from "@/components/scans/run-scan-modal";
 import { toast } from "sonner"
 
 interface ProjectWithLatestScan extends Repository {
@@ -76,6 +77,8 @@ export function ProjectsList() {
   const [projectToDelete, setProjectToDelete] = useState<{id: string, name: string} | null>(null);
   const [searchDebounce, setSearchDebounce] = useState<NodeJS.Timeout>();
   const [scanningProjects, setScanningProjects] = useState<Set<string>>(new Set());
+  const [scanModalOpen, setScanModalOpen] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<ProjectWithLatestScan | null>(null);
   
   const limit = 15; // Maximum 15 projects per page
 
@@ -177,45 +180,17 @@ export function ProjectsList() {
     }
   };
 
-  const handleQuickScan = async (projectId: string, projectName: string, defaultBranch: string, event: React.MouseEvent) => {
+  const handleOpenScanModal = (project: ProjectWithLatestScan, event: React.MouseEvent) => {
     event.stopPropagation(); // Prevent row click navigation
-    
-    try {
-      setScanningProjects(prev => new Set(prev).add(projectId));
-      
-      const result = await scansApi.start(workspace!.id, projectId, {
-        branch: defaultBranch || "main",
-        scan_type: "quick",
-      });
+    setSelectedProject(project);
+    setScanModalOpen(true);
+  };
 
-      toast.success(
-        <div>
-          <strong>Scan started</strong>
-          <p>Scanning {projectName}... Check the banner above for progress.</p>
-        </div>
-      );
-
-      // Refetch projects to update scan status
-      setTimeout(() => {
-        refetch();
-      }, 2000);
-
-      // NO REDIRECT - Banner will show scan status
-    } catch (err: any) {
-      console.error('Quick scan failed:', err);
-      toast.error(
-        <div>
-          <strong>Failed to start scan</strong>
-          <p>{err.message}</p>
-        </div>
-      );
-    } finally {
-      setScanningProjects(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(projectId);
-        return newSet;
-      });
-    }
+  const handleScanStarted = () => {
+    // Refetch projects to update scan status
+    setTimeout(() => {
+      refetch();
+    }, 2000);
   };
 
   const handleSearchChange = (value: string) => {
@@ -309,8 +284,7 @@ export function ProjectsList() {
       )}
 
       {/* Search and Filters */}
-      <Card>
-        <CardContent className="pt-6">
+     
           <div className="flex flex-col md:flex-row gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -346,6 +320,8 @@ export function ProjectsList() {
               </SelectContent>
             </Select>
 
+            {/* 
+            Integration filter is removed for now since we only have GitHub, but can be easily re-enabled when we add more providers
             <Select
               value={providerFilter}
               onValueChange={(v) => {
@@ -364,7 +340,7 @@ export function ProjectsList() {
                 <SelectItem value="gitlab" disabled>GitLab (Soon)</SelectItem>
                 <SelectItem value="bitbucket" disabled>Bitbucket (Soon)</SelectItem>
               </SelectContent>
-            </Select>
+            </Select> */}
 
             <Select
               value={statusFilter}
@@ -381,18 +357,14 @@ export function ProjectsList() {
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value="never_scanned">Never Scanned</SelectItem>
+                <SelectItem value="queued">Queued</SelectItem>
+                <SelectItem value="processing">Processing</SelectItem>
                 <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="running">Running</SelectItem>
-                <SelectItem value="normalizing">Processing</SelectItem>
-                <SelectItem value="ai_enriching">AI Analysis</SelectItem>
                 <SelectItem value="failed">Failed</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
               </SelectContent>
             </Select>
           </div>
-        </CardContent>
-      </Card>
+    
 
       {/* Loading State */}
       {loading && (
@@ -456,11 +428,7 @@ export function ProjectsList() {
                       const riskScore = calculateRiskScore(latestScan);
                       const riskColor = getRiskScoreColor(riskScore);
                       const isScanning = scanningProjects.has(project.id);
-                      const isActiveScan = latestScan && (
-                        latestScan.status === 'running' || 
-                        latestScan.status === 'normalizing' || 
-                        latestScan.status === 'ai_enriching'
-                      );
+                      const isActiveScan = latestScan && latestScan.status === 'processing';
 
                       return (
                         <tr
@@ -549,16 +517,21 @@ export function ProjectsList() {
                             <div className="flex items-center justify-center gap-2">
                               <Button
                                 size="sm"
-                                variant="ghost"
-                                onClick={(e) => handleQuickScan(project.id, project.name, project.default_branch, e)}
-                                disabled={isScanning || !!isActiveScan}
-                                className="h-8 w-8 p-0"
-                                title="Quick Scan"
+                                variant="default"
+                                onClick={(e) => handleOpenScanModal(project, e)}
+                                disabled={!!isActiveScan}
+                                className="h-8"
                               >
-                                {isScanning || isActiveScan ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                {isActiveScan ? (
+                                  <>
+                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                    Scanning
+                                  </>
                                 ) : (
-                                  <Zap className="h-4 w-4" />
+                                  <>
+                                    <Play className="h-4 w-4 mr-2" />
+                                    Run Scan
+                                  </>
                                 )}
                               </Button>
                               
@@ -677,13 +650,27 @@ export function ProjectsList() {
         </>
       )}
 
-      {/* <DisconnectProjectDialog 
+      <DisconnectProjectDialog 
         project={projectToDelete}
         workspaceId={workspace!.id}
         open={!!projectToDelete}
         onOpenChange={(open) => !open && setProjectToDelete(null)}
         onSuccess={onDisconnectSuccess}
-      /> */}
+      />
+
+      {/* Run Scan Modal */}
+      {selectedProject && workspace && (
+        <RunScanModal
+          open={scanModalOpen}
+          onOpenChange={setScanModalOpen}
+          repositoryId={selectedProject.id}
+          repositoryName={selectedProject.name}
+          defaultBranch={selectedProject.default_branch}
+          workspaceId={workspace.id}
+          userPlan="free" // TODO: Get from workspace/user context
+          onScanStarted={handleScanStarted}
+        />
+      )}
     </div>
   );
 }

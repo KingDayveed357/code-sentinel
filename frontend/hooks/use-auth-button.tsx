@@ -9,7 +9,8 @@ export function useAuthButton() {
   const { user, loading, profileLoading, githubSignIn, isOnboardingComplete } = useAuth();
   const router = useRouter();
 
-  const finalLoading = loading || profileLoading;
+  // Avoid showing loading if we already have a valid user during background revalidation
+  const finalLoading = loading || (profileLoading && !user);
 
   const label = finalLoading
     ? "Loading..."

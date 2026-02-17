@@ -19,7 +19,7 @@ import { useProgressStore } from "@/stores/progress-store";
  */
 export function useWorkspace() {
   const workspace = useCurrentWorkspace();
-  const { workspaces, loading, initializing, setWorkspace, setWorkspaces, setLoading } = useWorkspaceStore();
+  const { workspaces, loading, initializing, setWorkspace, setWorkspaces, setLoading, startSwitching, finishSwitching } = useWorkspaceStore();
   const { start, done } = useProgressStore();
 
   const { toast } = useToast();
@@ -37,7 +37,8 @@ export function useWorkspace() {
         throw new Error("Workspace not found");
       }
 
-      setLoading(true);
+      // ✅ FIX: Use lifecycle methods instead of setLoading
+      startSwitching();
       console.log('🔄 Starting workspace switch to:', targetWorkspace.name);
 
       // Update store first
@@ -80,7 +81,7 @@ export function useWorkspace() {
       });
 
       // Complete the loading state and progress bar
-      setLoading(false);
+      finishSwitching();
       done();
     } catch (err) {
       console.error("❌ Failed to switch workspace:", err);
@@ -89,7 +90,7 @@ export function useWorkspace() {
         description: "Could not switch workspace. Please try again.",
         variant: "destructive",
       });
-      setLoading(false);
+      finishSwitching();
       done();
     }
   };

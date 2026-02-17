@@ -31,6 +31,9 @@ export default function BillingPage() {
 
   const currentPlan = user?.plan?.toLowerCase() || "free"
 
+  // Instrumentation: render
+  console.log('BillingPage render', { userId: user?.id, workspaceId: workspace?.id, initializing });
+
   // ✅ FIX: Check if user is the owner of the team workspace
   const isTeamWorkspaceNonOwner = isTeamWorkspace && workspace?.owner_id !== user?.id
 

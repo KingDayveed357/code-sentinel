@@ -2,6 +2,7 @@
 // Single place for scan completion: read unified data, compute metrics, update scan row and scan_metrics.
 
 import type { FastifyInstance } from "fastify";
+import { ScanStatus } from "../../types";
 import { calculateSecurityScore } from "../utils/calculator";
 
 export interface ScanCompletionContext {
@@ -87,7 +88,7 @@ export async function completeScan(
   const { error: updateError } = await fastify.supabase
     .from("scans")
     .update({
-      status: "completed",
+      status: ScanStatus.COMPLETED,
       completed_at: new Date().toISOString(),
       commit_hash: context.commitHash,
       vulnerabilities_found: uniqueVulnCount,

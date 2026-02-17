@@ -3,11 +3,12 @@
 import React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { CheckCircle2, Loader2, XCircle, Clock, AlertCircle } from "lucide-react";
+import { CheckCircle2, Loader2, XCircle, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { ScanStatus } from "@/lib/api/scans";
 
 interface ScanStatusBadgeProps {
-  status: string;
+  status: ScanStatus;
   progressPercentage?: number | null;
   progressStage?: string | null;
   showProgress?: boolean;
@@ -16,8 +17,9 @@ interface ScanStatusBadgeProps {
 }
 
 /**
- * ✅ Unified scan status badge component
- * Consistent status display across all pages (scans, scanId, projects)
+ * ✅ Wave 1: Unified scan status badge component
+ * Handles canonical status lifecycle: queued → processing → completed/failed
+ * AI enrichment is tracked separately and not shown here
  */
 export function ScanStatusBadge({
   status,
@@ -37,13 +39,13 @@ export function ScanStatusBadge({
           badgeClassName: "bg-emerald-600 hover:bg-emerald-700 text-white",
           label: "Completed",
         };
-      case "running":
+      case "processing":
         return {
           icon: Loader2,
           iconColor: "text-blue-500",
           badgeVariant: "secondary" as const,
           badgeClassName: "bg-blue-600 hover:bg-blue-700 text-white",
-          label: "Running",
+          label: "Processing",
           animate: true,
         };
       case "failed":
@@ -54,17 +56,18 @@ export function ScanStatusBadge({
           badgeClassName: "bg-red-600 hover:bg-red-700 text-white",
           label: "Failed",
         };
-      case "pending":
+      case "queued":
         return {
           icon: Clock,
           iconColor: "text-yellow-500",
           badgeVariant: "secondary" as const,
           badgeClassName: "bg-yellow-600 hover:bg-yellow-700 text-white",
-          label: "Pending",
+          label: "Queued",
         };
       default:
+        // Fallback for any unexpected status
         return {
-          icon: AlertCircle,
+          icon: Clock,
           iconColor: "text-muted-foreground",
           badgeVariant: "outline" as const,
           badgeClassName: "",
@@ -99,8 +102,8 @@ export function ScanStatusBadge({
         {config.label}
       </Badge>
 
-      {/* Progress indicator for running scans */}
-      {status === "running" && showProgress && progressPercentage !== null && progressPercentage !== undefined && (
+      {/* Progress indicator for processing scans */}
+      {status === "processing" && showProgress && progressPercentage !== null && progressPercentage !== undefined && (
         <div className="flex items-center gap-2 min-w-[120px]">
           <Progress value={progressPercentage} className="h-1.5 flex-1" />
           <span className="text-xs font-medium text-muted-foreground min-w-[35px] text-right">
@@ -110,7 +113,7 @@ export function ScanStatusBadge({
       )}
 
       {/* Progress stage text */}
-      {status === "running" && showProgress && progressStage && (
+      {status === "processing" && showProgress && progressStage && (
         <span className="text-xs text-muted-foreground hidden sm:inline">
           {progressStage}
         </span>

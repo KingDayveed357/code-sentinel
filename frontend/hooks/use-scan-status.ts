@@ -27,9 +27,7 @@ export function useScanStatus(scanId: string, pollInterval: number = 3000) {
       setError(null);
       
       // Fetch logs if scan is in progress
-      if (data.scan.status === 'running' || 
-          data.scan.status === 'normalizing' || 
-          data.scan.status === 'ai_enriching') {
+      if (data.scan.status === 'processing') {
         
         const logsData = await scansApi.getLogs(scanId);
         
@@ -43,9 +41,7 @@ export function useScanStatus(scanId: string, pollInterval: number = 3000) {
       }
       
       // Stop polling if scan is complete or failed
-      if (data.scan.status === 'completed' || 
-          data.scan.status === 'failed' || 
-          data.scan.status === 'cancelled') {
+      if (data.scan.status === 'completed' || data.scan.status === 'failed') {
         setIsPolling(false);
         if (intervalRef.current) {
           clearInterval(intervalRef.current);
@@ -129,9 +125,7 @@ export function useRepositoryScanStatus(repoId: string, pollInterval: number = 5
         setLatestScan(scan);
         
         // Fetch logs if scan is in progress
-        if (scan.status === 'running' || 
-            scan.status === 'normalizing' || 
-            scan.status === 'ai_enriching') {
+        if (scan.status === 'processing') {
           
           const logsData = await scansApi.getLogs(scan.id);
           if (isMountedRef.current) {
@@ -161,10 +155,7 @@ export function useRepositoryScanStatus(repoId: string, pollInterval: number = 5
 
     // Start polling only if there's an active scan
     intervalRef.current = setInterval(() => {
-      if (latestScan && 
-          (latestScan.status === 'running' || 
-           latestScan.status === 'normalizing' || 
-           latestScan.status === 'ai_enriching')) {
+      if (latestScan && latestScan.status === 'processing') {
         fetchLatestScan();
       }
     }, pollInterval);

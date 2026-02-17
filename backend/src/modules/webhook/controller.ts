@@ -4,6 +4,7 @@
 // =====================================================
 import type { FastifyRequest, FastifyReply, FastifyInstance} from 'fastify';
 import crypto from 'crypto';
+import { ScanStatus } from '../scans/types';
 import {
   verifyGitHubSignature,
   extractBranchFromRef,
@@ -232,12 +233,12 @@ async function handlePushEvent(
     return;
   }
 
-  // Check for duplicate scans (same commit SHA)
+  // Check for duplicate scans (same commit hash)
   const { data: existingScan } = await fastify.supabase
     .from('scans')
     .select('id')
     .eq('repository_id', repository.id)
-    .eq('commit_sha', payload.after)
+    .eq('commit_hash', payload.after)
     .single();
 
   if (existingScan) {
@@ -278,10 +279,10 @@ async function handlePushEvent(
       repository_id: repository.id,
       branch,
       scan_type: scanType,
-      status: 'pending',
+      status: ScanStatus.QUEUED,
       trigger_type: 'push',
       trigger_source: deliveryId,
-      commit_sha: payload.after,
+      commit_hash: payload.after,
       commit_message: payload.head_commit?.message || null,
       sast_enabled: enabledScanners.sast,
       sca_enabled: enabledScanners.sca,
@@ -303,7 +304,7 @@ async function handlePushEvent(
     trigger_type: 'push',
     trigger_source: deliveryId,
     branch,
-    commit_sha: payload.after,
+    commit_hash: payload.after,
     commit_message: payload.head_commit?.message || null,
     committer: payload.pusher?.name || null,
   });
@@ -401,10 +402,10 @@ async function handlePullRequestEvent(
       repository_id: repository.id,
       branch,
       scan_type: scanType,
-      status: 'pending',
+      status: ScanStatus.QUEUED,
       trigger_type: 'pull_request',
       trigger_source: `PR#${payload.pull_request.number}`,
-      commit_sha: payload.pull_request.head.sha,
+      commit_hash: payload.pull_request.head.sha,
       commit_message: payload.pull_request.title,
       sast_enabled: enabledScanners.sast,
       sca_enabled: enabledScanners.sca,
@@ -426,7 +427,7 @@ async function handlePullRequestEvent(
     trigger_type: 'pull_request',
     trigger_source: `PR#${payload.pull_request.number}`,
     branch,
-    commit_sha: payload.pull_request.head.sha,
+    commit_hash: payload.pull_request.head.sha,
     commit_message: payload.pull_request.title,
   });
 
@@ -467,14 +468,15 @@ async function cancelPendingScans(
     .select('id')
     .eq('repository_id', repositoryId)
     .eq('branch', branch)
-    .in('status', ['pending', 'running']);
+    .in('status', [ScanStatus.QUEUED, ScanStatus.PROCESSING]);
 
   if (pendingScans && pendingScans.length > 0) {
     await fastify.supabase
       .from('scans')
       .update({
-        status: 'cancelled',
+        status: ScanStatus.FAILED,
         completed_at: new Date().toISOString(),
+        error_message: 'Cancelled by newer scan on same branch',
       })
       .in(
         'id',

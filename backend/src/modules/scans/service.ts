@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { ScansRepository } from "./repository";
 import { EntitlementsService } from "../entitlements/service";
 import { getProfile } from "../../scanners/scan-profiles";
+import { ScanStatus } from "./types";
 import type { ScanFilters, ScanDetail, PaginatedScansResponse, ScanWithRepository } from "./types";
 
 export class ScansService {
@@ -65,7 +66,7 @@ export class ScansService {
       repository_id: repositoryId,
       branch,
       scan_type: normalizedScanType,
-      status: "pending",
+      status: ScanStatus.QUEUED,
       progress_percentage: 0,
       progress_stage: "Queued",
       sast_enabled: enabledScanners.sast,
@@ -89,7 +90,7 @@ export class ScansService {
 
     return {
       scan_id: scan.id,
-      status: "pending",
+      status: ScanStatus.QUEUED,
       message: "Scan initiated successfully",
     };
   }
@@ -197,9 +198,9 @@ export class ScansService {
 
     return {
       total: scans?.length || 0,
-      running: scans?.filter((s) => s.status === "running").length || 0,
-      completed: scans?.filter((s) => s.status === "completed").length || 0,
-      failed: scans?.filter((s) => s.status === "failed").length || 0,
+      running: scans?.filter((s) => s.status === ScanStatus.PROCESSING).length || 0,
+      completed: scans?.filter((s) => s.status === ScanStatus.COMPLETED).length || 0,
+      failed: scans?.filter((s) => s.status === ScanStatus.FAILED).length || 0,
     };
   }
 
@@ -207,12 +208,13 @@ export class ScansService {
     const scan = await this.repository.findById(scanId, workspaceId);
     if (!scan) throw this.fastify.httpErrors.notFound("Scan not found");
 
-    if (scan.status === "completed" || scan.status === "failed") {
+    if (scan.status === ScanStatus.COMPLETED || scan.status === ScanStatus.FAILED) {
       throw this.fastify.httpErrors.badRequest("Cannot cancel completed or failed scan");
     }
 
-    await this.repository.updateStatus(scanId, workspaceId, "cancelled", {
-      completed_at: new Date().toISOString()
+    await this.repository.updateStatus(scanId, workspaceId, ScanStatus.FAILED, {
+      completed_at: new Date().toISOString(),
+      error_message: 'Cancelled by user'
     });
 
     return { success: true, message: "Scan cancelled successfully" };

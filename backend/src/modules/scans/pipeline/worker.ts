@@ -4,6 +4,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Job } from "bullmq";
 import type { ScanJobPayload } from "../../../utils/queue/job-queue";
+import { ScanStatus } from "../types";
 import { ProgressTracker } from "./utils/progress";
 import { autoCreateIssuesForScan } from "../../github-issues/service";
 import { EntitlementsService } from "../../entitlements/service";
@@ -87,7 +88,7 @@ export async function processScanJob(
 
   try {
     await addLog("info", "Scan job started", { jobId: job.id });
-    await updateScanStatus(fastify, scanId, "running");
+    await updateScanStatus(fastify, scanId, ScanStatus.PROCESSING);
 
     // --- Pipeline step 1: Timeout guard ---
     timeoutCheckInterval = setInterval(async () => {
@@ -100,7 +101,7 @@ export async function processScanJob(
         await updateScanStatus(
           fastify,
           scanId,
-          "failed",
+          ScanStatus.FAILED,
           "Scan timeout: exceeded 30 minutes"
         );
         if (timeoutCheckInterval) clearInterval(timeoutCheckInterval);
@@ -293,7 +294,6 @@ export async function processScanJob(
     await job.updateProgress(70);
 
     // --- Pipeline step 6: Run deduplication (unified + instances) ---
-    await updateScanStatus(fastify, scanId, "normalizing");
     await progress.emit("normalizing", "Deduplicating findings across scanners");
     
     // Process unified vulnerabilities
@@ -357,7 +357,7 @@ export async function processScanJob(
 
   } catch (error: any) {
     await addLog("error", "Scan job failed", { error: error.message });
-    await updateScanStatus(fastify, scanId, "failed", error.message);
+    await updateScanStatus(fastify, scanId, ScanStatus.FAILED, error.message);
     throw error;
   } finally {
     if (timeoutCheckInterval) clearInterval(timeoutCheckInterval);
@@ -381,18 +381,14 @@ export async function processScanJob(
 async function updateScanStatus(
   fastify: FastifyInstance,
   scanId: string,
-  status: string,
+  status: ScanStatus,
   errorMessage?: string
 ) {
   const updates: any = { status };
-  if (status === "running") {
+  if (status === ScanStatus.PROCESSING) {
     updates.started_at = new Date().toISOString();
     updates.progress_percentage = 0;
     updates.progress_stage = "Starting scan...";
-  }
-  if (status === "normalizing") {
-    updates.progress_percentage = 75;
-    updates.progress_stage = "Finalizing results...";
   }
   if (errorMessage) {
     updates.error_message = errorMessage;

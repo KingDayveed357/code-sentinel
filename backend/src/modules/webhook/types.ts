@@ -13,7 +13,7 @@ export interface RepositorySettings {
   schedule_cron: string | null;
   branch_filter: string[] | null;
   excluded_branches: string[] | null;
-  default_scan_type: 'quick' | 'full'; // ✅ FIX: Removed 'custom'
+  default_scan_type: 'quick' | 'full';
   enabled_scanners: {
     sast: boolean;
     sca: boolean;
@@ -61,6 +61,11 @@ export interface WebhookEvent {
   created_at: string;
 }
 
+// =====================================================
+// AUTO SCAN HISTORY
+// =====================================================
+// Wave 1 Fix: Renamed commit_sha → commit_hash for consistency
+
 export interface AutoScanHistory {
   id: string;
   scan_id: string;
@@ -69,7 +74,7 @@ export interface AutoScanHistory {
   trigger_source: string | null;
   webhook_event_id: string | null;
   branch: string;
-  commit_sha: string | null;
+  commit_hash: string | null; // ✅ FIXED: Was commit_sha
   commit_message: string | null;
   committer: string | null;
   is_duplicate: boolean;

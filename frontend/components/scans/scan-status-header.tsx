@@ -39,25 +39,16 @@ export function ScanStatusHeader({
           title: "Scan Complete",
           bgGradient: "from-emerald-950/20 to-teal-950/10",
         };
-      case "running":
+      case "processing":
         return {
           icon: Loader2,
           iconColor: "text-blue-500 animate-spin",
           badgeVariant: "secondary" as const,
           badgeClassName: "bg-blue-600 hover:bg-blue-700",
-          title: "Scan Running",
+          title: "Scan Processing",
           bgGradient: "from-blue-950/20 to-indigo-950/10",
         };
-      case "normalizing":
-        return {
-          icon: Loader2,
-          iconColor: "text-purple-500 animate-spin",
-          badgeVariant: "secondary" as const,
-          badgeClassName: "bg-purple-600 hover:bg-purple-700",
-          title: "Finalizing Results",
-          bgGradient: "from-purple-950/20 to-violet-950/10",
-        };
-      case "pending":
+      case "queued":
         return {
           icon: Clock,
           iconColor: "text-yellow-500",
@@ -133,14 +124,14 @@ export function ScanStatusHeader({
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {/* Progress for running/normalizing/pending scans */}
-            {(status === "running" || status === "normalizing" || status === "pending") && 
+            {/* Progress for processing/queued scans */}
+            {(status === "processing" || status === "queued") && 
              progressPercentage !== null && progressPercentage !== undefined && (
               <div className="flex items-center gap-2 min-w-[200px]">
                 <div className="flex-1 space-y-1">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-400">
-                      {progressStage || (status === "normalizing" ? "Finalizing..." : status === "pending" ? "Queued..." : "Scanning...")}
+                      {progressStage || (status === "queued" ? "Queued..." : "Processing...")}
                     </span>
                     <span className="font-semibold text-emerald-400">
                       {Math.round(progressPercentage)}%

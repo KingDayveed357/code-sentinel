@@ -35,6 +35,9 @@ export function HeroCTAButton({
 
   const isLoading = loading || isExecuting;
 
+  // Instrumentation: render
+  console.log('HeroCTAButton render', { isLoading });
+
   return (
     <Button
       size={size}

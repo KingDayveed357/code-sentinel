@@ -1,11 +1,23 @@
 // lib/api/scans.ts
-// ✅ REFACTORED: Uses global workspace-scoped routes
-// No more nested project routes - scans are workspace-level
+// ✅ Wave 1 REFACTORED: Uses canonical scan status lifecycle
+// Unified status enum across backend and frontend
 
 import { apiFetch } from "@/lib/api";
 import { getCurrentSession } from "@/lib/supabase-client";
 
+// =====================================================
+// CANONICAL SCAN STATUS (matches backend exactly)
+// =====================================================
+export type ScanStatus = 'queued' | 'processing' | 'completed' | 'failed';
+
+// =====================================================
+// AI ENRICHMENT STATUS (separate from scan lifecycle)
+// =====================================================
+export type AIEnrichmentStatus = 'not_requested' | 'enriching' | 'completed' | 'failed';
+
+// =====================================================
 // TYPES
+// =====================================================
 export interface Scan {
   id: string;
   workspace_id: string;
@@ -13,7 +25,7 @@ export interface Scan {
   branch: string;
   commit_hash: string | null;
   scan_type: "quick" | "full"; 
-  status: "pending" | "running" | "normalizing" | "completed" | "failed" | "cancelled";
+  status: ScanStatus;
   vulnerabilities_found: number;
   critical_count: number;
   high_count: number;
@@ -27,6 +39,13 @@ export interface Scan {
   duration_seconds: number | null;
   progress_percentage?: number | null; 
   progress_stage?: string | null;
+  
+  // AI enrichment (separate lifecycle)
+  ai_enrichment_status: AIEnrichmentStatus;
+  ai_enrichment_started_at: string | null;
+  ai_enrichment_completed_at: string | null;
+  ai_enrichment_error: string | null;
+  
   repository: {
     id: string;
     name: string;
@@ -111,7 +130,7 @@ export const scansApi = {
     params: {
       page?: number;
       limit?: number;
-      status?: string;
+      status?: ScanStatus | 'all';
       sort?: "recent" | "oldest";
     } = {}
   ): Promise<{
@@ -130,7 +149,7 @@ export const scansApi = {
       limit: String(params.limit || 15),
     });
 
-    if (params.status) query.append("status", params.status);
+    if (params.status && params.status !== 'all') query.append("status", params.status);
     if (params.sort) query.append("sort", params.sort);
 
     return apiFetch(`/workspaces/${workspaceId}/scans?${query}`, {
@@ -158,10 +177,6 @@ export const scansApi = {
     });
   },
 
-  /**
-   * Start a new scan (still repository-scoped)
-   * Route: POST /api/scans/:repoId/start
-   */
   /**
    * Start a new scan (workspace-scoped)
    * Route: POST /api/workspaces/:workspaceId/scans
@@ -274,7 +289,7 @@ export const scansApi = {
     params: {
       page?: number;
       limit?: number;
-      status?: string;
+      status?: ScanStatus | 'all';
       severity?: string;
     } = {}
   ): Promise<{
@@ -289,7 +304,7 @@ export const scansApi = {
       limit: String(params.limit || 20),
     });
 
-    if (params.status) query.append("status", params.status);
+    if (params.status && params.status !== 'all') query.append("status", params.status);
     if (params.severity) query.append("severity", params.severity);
 
     const response: any = await apiFetch(`/workspaces/${workspaceId}/scans?${query.toString()}`, {
