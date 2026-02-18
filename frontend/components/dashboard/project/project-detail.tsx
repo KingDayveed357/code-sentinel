@@ -264,9 +264,19 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
           </Button>
           <Button 
             onClick={handleRunScan}
+            disabled={latestScan?.status === 'processing' || latestScan?.status === 'queued'}
           >
-            <Zap className="mr-2 h-4 w-4" />
-            Run Scan
+            {(latestScan?.status === 'processing' || latestScan?.status === 'queued') ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Scanning...
+              </>
+            ) : (
+              <>
+                <Zap className="mr-2 h-4 w-4" />
+                Run Scan
+              </>
+            )}
           </Button>
         </div>
       </div>
@@ -645,7 +655,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
           repositoryName={project.name}
           defaultBranch={project.default_branch}
           workspaceId={workspace.id}
-          userPlan="free" // TODO: Get from workspace/user context
+          workspacePlan={(workspace.plan?.toLowerCase() ?? "free") as "free" | "dev" | "team" | "enterprise"}
+          isScanning={latestScan?.status === 'processing' || latestScan?.status === 'queued'}
           onScanStarted={handleScanStarted}
         />
       )}

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { PLAN_LIMITS, getLimits, isUnlimited } from './limits';
+import { getLimits, isUnlimited, normalizePlanName, type PlanName } from './limits';
 
 export class EntitlementsService {
   constructor(private fastify: FastifyInstance) {}
@@ -19,11 +19,30 @@ export class EntitlementsService {
   }
 
   /**
-   * Helper to resolve plan from subscription
+   * Resolve plan strictly from workspace context.
+   * Workspace.plan is the primary source of truth for entitlements.
    */
-  async getWorkspacePlan(workspaceId: string): Promise<string> {
+  async getWorkspacePlan(workspaceId: string): Promise<PlanName> {
+    const { data: workspace, error: workspaceError } = await this.fastify.supabase
+      .from('workspaces')
+      .select('plan')
+      .eq('id', workspaceId)
+      .maybeSingle();
+
+    if (workspace?.plan) {
+      return normalizePlanName(workspace.plan);
+    }
+
+    if (workspaceError) {
+      this.fastify.log.warn(
+        { workspaceId, error: workspaceError },
+        'Failed to resolve workspace plan from workspaces table'
+      );
+    }
+
+    // Backward-compatible fallback for legacy records where workspace may be missing.
     const subscription = await this.getWorkspaceSubscription(workspaceId);
-    return subscription?.plan || 'Free';
+    return normalizePlanName(subscription?.plan);
   }
 
   /**
@@ -42,7 +61,7 @@ export class EntitlementsService {
     message?: string;
   }> {
     const plan = await this.getWorkspacePlan(workspaceId);
-    const limits = getLimits(plan as any);
+    const limits = getLimits(plan);
     const unlimited = isUnlimited(limits.repositories);
     
     const { count: currentCount } = await this.fastify.supabase
@@ -88,7 +107,7 @@ export class EntitlementsService {
     message?: string;
   }> {
     const plan = await this.getWorkspacePlan(workspaceId);
-    const limits = getLimits(plan as any);
+    const limits = getLimits(plan);
     const usage = await this.getOrCreateUsageRecord(workspaceId, plan);
 
     // Check monthly limit only
@@ -170,7 +189,7 @@ export class EntitlementsService {
    */
   private async getOrCreateUsageRecord(workspaceId: string, plan: string) {
     const { year, month } = this.getCurrentPeriod();
-    const limits = getLimits(plan as any);
+    const limits = getLimits(plan);
 
     let query = this.fastify.supabase
       .from('workspace_usage_tracking')
@@ -227,7 +246,7 @@ export class EntitlementsService {
   async getWorkspaceUsage(workspaceId: string) {
     const plan = await this.getWorkspacePlan(workspaceId);
     const usage = await this.getOrCreateUsageRecord(workspaceId, plan);
-    const limits = getLimits(plan as any);
+    const limits = getLimits(plan);
 
     // Also get current repository count from DB as source of truth
     const { count: repoCount } = await this.fastify.supabase

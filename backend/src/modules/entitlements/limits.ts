@@ -36,8 +36,23 @@ export const PLAN_LIMITS = {
 export type PlanName = keyof typeof PLAN_LIMITS;
 export type LimitKey = keyof typeof PLAN_LIMITS.Free;
 
-export function getLimits(plan: PlanName) {
-  return PLAN_LIMITS[plan] || PLAN_LIMITS.Free;
+const PLAN_NAME_MAP: Record<string, PlanName> = {
+  free: "Free",
+  dev: "Dev",
+  team: "Team",
+  enterprise: "Enterprise",
+};
+
+export function normalizePlanName(plan?: string | null): PlanName {
+  if (!plan) return "Free";
+
+  const normalized = PLAN_NAME_MAP[plan.trim().toLowerCase()];
+  return normalized || "Free";
+}
+
+export function getLimits(plan?: string | null) {
+  const normalizedPlan = normalizePlanName(plan);
+  return PLAN_LIMITS[normalizedPlan];
 }
 
 export function isUnlimited(value: number): boolean {

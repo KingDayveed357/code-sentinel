@@ -21,6 +21,7 @@ import {
 } from "./steps/run-scanners";
 import { processUnifiedVulnerabilities, autoFixMissingVulnerabilities } from "./steps/deduplicate";
 import { completeScan } from "./steps/complete-scan";
+import { enqueueVulnerabilityExplanationsForScan } from "../../ai/application/scan-auto-enrichment";
 
 interface ScanLog {
   timestamp: string;
@@ -336,9 +337,25 @@ export async function processScanJob(
         totalInstances: completion.locationsInThisScan
     });
 
+    // --- Pipeline step 8: Trigger AI enrichment asynchronously (non-blocking) ---
+    void enqueueVulnerabilityExplanationsForScan(fastify, workspaceId, scanId)
+      .then(async (aiResult) => {
+        await addLog("info", "AI enrichment queue dispatch complete", {
+          queued: aiResult.queued,
+          processing: aiResult.processing,
+          ready: aiResult.ready,
+          failed: aiResult.failed,
+        });
+      })
+      .catch(async (aiError: any) => {
+        await addLog("warning", "AI enrichment dispatch failed (non-fatal)", {
+          error: aiError?.message || "Unknown AI enrichment dispatch error",
+        });
+      });
+
     await job.updateProgress(95);
 
-    // --- Pipeline step 8: Auto-create GitHub issues ---
+    // --- Pipeline step 9: Auto-create GitHub issues ---
     try {
         await addLog("info", "Checking auto-issue creation settings");
         const issueResult = await autoCreateIssuesForScan(fastify, scanId);

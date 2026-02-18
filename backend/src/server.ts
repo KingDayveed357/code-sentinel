@@ -21,6 +21,7 @@ import webhooksRoutes from './modules/webhook/route';
 import entitlementsRoutes from './modules/entitlements/routes';
 import workspacesRoutes from './modules/workspaces/routes';
 import billingRoutes from './modules/billing/routes';
+import { registerAiRoutes } from './modules/ai/api/routes';
 
 // Workers
 import { processScanJob } from './modules/scans';
@@ -150,6 +151,7 @@ export function buildServer() {
 
   // Load billing routes (dev mode mock + webhooks)
   app.register(billingRoutes, { prefix: '/api/billing' });
+  app.register(registerAiRoutes, { prefix: '/api/ai' });
 
 
   // Global error handler

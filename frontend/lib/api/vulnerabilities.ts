@@ -8,6 +8,36 @@ import { apiFetch } from "@/lib/api";
 // TYPES
 // ============================================================================
 
+export type AiExplanationState = "idle" | "queued" | "processing" | "ready" | "failed";
+
+export interface VulnerabilityExplanation {
+  vulnerabilityTitle: string;
+  summary: string;
+  impact: string;
+  exploitScenario: string;
+  remediationOverview: string;
+  stepByStepFix: string[];
+  confidence: number;
+  citations: string[];
+  generated_at?: string;
+  provider?: string;
+  model_version?: string;
+}
+
+export interface AiExplanationLifecycleResponse {
+  taskId: string;
+  state: Exclude<AiExplanationState, "idle">;
+  explanation: VulnerabilityExplanation | null;
+  provider?: string;
+  cacheHit?: boolean;
+  fallbackUsed?: boolean;
+  retryCount?: number;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
 export interface Vulnerability {
   id: string;
   workspace_id: string;
@@ -31,21 +61,7 @@ export interface Vulnerability {
   resolved_at: string | null;
   assigned_to: string | null;
   triage_note: string | null;
-  ai_explanation: {
-    summary: string;
-    why_it_matters: string;
-    annotated_code: string | null;
-    step_by_step_fix: string[];
-    false_positive_indicators: string[];
-    generated_at: string;
-    model_version: string;
-  } | null;
-  risk_context: {
-    public_facing: boolean;
-    auth_required: boolean;
-    framework: string | null;
-    exploit_likelihood: "high" | "medium" | "low";
-  } | null;
+  ai_explanation: VulnerabilityExplanation | Record<string, any> | null;
   scanner_metadata: any;
 }
 
@@ -170,7 +186,7 @@ export const vulnerabilitiesApi = {
   async getById(
     workspaceId: string,
     vulnId: string,
-    includes: string[] = ["instances", "ai_explanation", "risk_context", "related_issues"],
+    includes: string[] = ["instances", "ai_explanation", "related_issues"],
     instancesPage: number = 1,
     instancesLimit: number = 20
   ): Promise<VulnerabilityDetail> {
@@ -247,6 +263,28 @@ export const vulnerabilitiesApi = {
         body: JSON.stringify({ regenerate }),
       }
     );
+  },
+
+  /**
+   * Trigger or fetch AI explanation lifecycle state
+   * Route: POST /api/ai/vulnerability/:id/explanation
+   */
+  async requestAIExplanation(
+    workspaceId: string,
+    vulnId: string,
+    options: { regenerate?: boolean; promptVersion?: string } = {}
+  ): Promise<AiExplanationLifecycleResponse> {
+    return apiFetch(`/ai/vulnerability/${vulnId}/explanation`, {
+      method: "POST",
+      requireAuth: true,
+      params: {
+        workspace_id: workspaceId,
+      },
+      body: JSON.stringify({
+        regenerate: options.regenerate ?? false,
+        promptVersion: options.promptVersion ?? "v1",
+      }),
+    });
   },
 
   /**

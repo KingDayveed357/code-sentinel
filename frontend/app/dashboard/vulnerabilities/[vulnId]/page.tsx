@@ -26,7 +26,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { useRouter, useParams, useSearchParams } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,12 +39,15 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { RiskContextGrid } from "@/components/vulnerabilities/risk-context-grid";
 import { AIExplanationPanel } from "@/components/vulnerabilities/ai-explanation-panel";
 import { ConfidenceGauge } from "@/components/vulnerabilities/confidence-gauge";
-import { ChevronLeft, Sparkles, CheckCircle, XCircle } from "lucide-react";
+import { ChevronLeft, CheckCircle, Sparkles, XCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { vulnerabilitiesApi } from "@/lib/api/vulnerabilities";
+import {
+  vulnerabilitiesApi,
+  type AiExplanationState,
+  type VulnerabilityExplanation,
+} from "@/lib/api/vulnerabilities";
 import { InstanceLocations } from "@/components/vulnerabilities/instance-locations";
 
 interface VulnerabilityDetail {
@@ -60,9 +63,8 @@ interface VulnerabilityDetail {
   confidence: number | null;
   status: string;
   assigned_to: string | null;
-  ai_explanation: any;
+  ai_explanation: VulnerabilityExplanation | Record<string, any> | null;
   ai_remediation: string | null;
-  risk_context: any;
   first_detected_at: string;
   last_seen_at: string;
   resolved_at: string | null;
@@ -75,15 +77,16 @@ export default function VulnerabilityDetailPage() {
   const { workspaceId } = useAuth();
   const router = useRouter();
   const params = useParams();
-  const searchParams = useSearchParams();
   const vulnId = params?.vulnId as string;
   const [vulnerability, setVulnerability] = useState<VulnerabilityDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [comment, setComment] = useState("");
+  const [aiState, setAiState] = useState<AiExplanationState>("idle");
+  const [aiExplanation, setAiExplanation] = useState<VulnerabilityExplanation | null>(null);
+  const [aiErrorMessage, setAiErrorMessage] = useState<string | null>(null);
   
   // ✅ INSTANCE PAGINATION STATE: Track current page and loading state
-  const [instancesPage, setInstancesPage] = useState(1);
   const [isLoadingMoreInstances, setIsLoadingMoreInstances] = useState(false);
   const [allInstances, setAllInstances] = useState<any[]>([]);
   const [instancesPagination, setInstancesPagination] = useState<{
@@ -91,6 +94,42 @@ export default function VulnerabilityDetailPage() {
     totalPages: number;
     totalCount: number;
   } | null>(null);
+
+  const normalizeExplanation = (
+    explanation: VulnerabilityDetail["ai_explanation"] | undefined
+  ): VulnerabilityExplanation | null => {
+    if (!explanation || typeof explanation !== "object") {
+      return null;
+    }
+    const candidate = explanation as any;
+    if (
+      typeof candidate.vulnerabilityTitle !== "string" ||
+      typeof candidate.summary !== "string" ||
+      typeof candidate.impact !== "string" ||
+      typeof candidate.exploitScenario !== "string" ||
+      typeof candidate.remediationOverview !== "string" ||
+      !Array.isArray(candidate.stepByStepFix) ||
+      typeof candidate.confidence !== "number" ||
+      !Array.isArray(candidate.citations)
+    ) {
+      return null;
+    }
+    return {
+      vulnerabilityTitle: candidate.vulnerabilityTitle,
+      summary: candidate.summary,
+      impact: candidate.impact,
+      exploitScenario: candidate.exploitScenario,
+      remediationOverview: candidate.remediationOverview,
+      stepByStepFix: candidate.stepByStepFix.filter(
+        (v: unknown) => typeof v === "string"
+      ),
+      confidence: candidate.confidence,
+      citations: candidate.citations.filter((v: unknown) => typeof v === "string"),
+      generated_at: candidate.generated_at,
+      provider: candidate.provider,
+      model_version: candidate.model_version,
+    };
+  };
 
   useEffect(() => {
     if (!workspaceId || !vulnId) return;
@@ -102,11 +141,15 @@ export default function VulnerabilityDetailPage() {
         const data = await vulnerabilitiesApi.getById(
           workspaceId,
           vulnId,
-          ["instances", "ai_explanation", "risk_context", "related_issues"],
+          ["instances", "ai_explanation", "related_issues"],
           1, // Start with page 1
           20 // Default limit
         );
         setVulnerability(data as any);
+        const normalizedExplanation = normalizeExplanation(data.ai_explanation);
+        setAiExplanation(normalizedExplanation);
+        setAiState(normalizedExplanation ? "ready" : "idle");
+        setAiErrorMessage(null);
         
         // Store instances and pagination info
         if (data.instances) {
@@ -118,9 +161,9 @@ export default function VulnerabilityDetailPage() {
           });
         }
 
-        // Auto-generate AI explanation if requested
-        if (searchParams?.get("explain") === "true" && !data.ai_explanation) {
-          handleGenerateAI();
+        // Auto-trigger async AI explanation/title generation when missing
+        if (!normalizedExplanation) {
+          triggerAIExplanation(false);
         }
       } catch (error) {
         console.error("Failed to fetch vulnerability:", error);
@@ -130,7 +173,7 @@ export default function VulnerabilityDetailPage() {
     };
 
     fetchVulnerability();
-  }, [workspaceId, vulnId, searchParams]);
+  }, [workspaceId, vulnId]);
 
   const handleStatusUpdate = async (status: string) => {
     if (!workspaceId || !vulnId) return;
@@ -152,20 +195,91 @@ export default function VulnerabilityDetailPage() {
     }
   };
 
-  const handleGenerateAI = async () => {
+  const triggerAIExplanation = async (regenerate: boolean) => {
     if (!workspaceId || !vulnId) return;
 
     try {
-      const updated = await vulnerabilitiesApi.generateAIExplanation(
+      setAiErrorMessage(null);
+      const lifecycle = await vulnerabilitiesApi.requestAIExplanation(
         workspaceId,
         vulnId,
-        false
+        { regenerate, promptVersion: "v1" }
       );
-      setVulnerability(updated as any);
+
+      if (lifecycle.state === "ready" && lifecycle.explanation) {
+        setAiExplanation(lifecycle.explanation);
+        setAiState("ready");
+        setVulnerability((prev) =>
+          prev
+            ? {
+                ...prev,
+                ai_explanation: lifecycle.explanation,
+              }
+            : prev
+        );
+        return;
+      }
+
+      if (lifecycle.state === "failed") {
+        setAiState("failed");
+        setAiErrorMessage(lifecycle.error?.message || "AI explanation failed");
+        return;
+      }
+
+      setAiState(lifecycle.state);
     } catch (error) {
-      console.error("Failed to generate AI explanation:", error);
+      console.error("Failed to trigger AI explanation:", error);
+      setAiState("failed");
+      setAiErrorMessage(
+        error instanceof Error ? error.message : "AI explanation failed"
+      );
     }
   };
+
+  useEffect(() => {
+    if (!workspaceId || !vulnId) return;
+    if (aiState !== "queued" && aiState !== "processing") return;
+
+    const interval = setInterval(async () => {
+      try {
+        const lifecycle = await vulnerabilitiesApi.requestAIExplanation(
+          workspaceId,
+          vulnId,
+          { regenerate: false, promptVersion: "v1" }
+        );
+
+        if (lifecycle.state === "ready" && lifecycle.explanation) {
+          setAiExplanation(lifecycle.explanation);
+          setAiState("ready");
+          setAiErrorMessage(null);
+          setVulnerability((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  ai_explanation: lifecycle.explanation,
+                }
+              : prev
+          );
+          return;
+        }
+
+        if (lifecycle.state === "failed") {
+          setAiState("failed");
+          setAiErrorMessage(lifecycle.error?.message || "AI explanation failed");
+          return;
+        }
+
+        setAiState(lifecycle.state);
+      } catch (error) {
+        setAiState("failed");
+        setAiErrorMessage(
+          error instanceof Error ? error.message : "AI explanation failed"
+        );
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [aiState, workspaceId, vulnId]);
 
   // ✅ LOAD MORE INSTANCES: Fetch next page of instances
   const handleLoadMoreInstances = async () => {
@@ -241,6 +355,9 @@ export default function VulnerabilityDetailPage() {
     );
   }
 
+  const effectiveTitle =
+    aiExplanation?.vulnerabilityTitle?.trim() || vulnerability.title;
+
   return (
     <div className="space-y-6">
       {/* Breadcrumb */}
@@ -264,7 +381,19 @@ export default function VulnerabilityDetailPage() {
             {vulnerability.status.replace("_", " ").toUpperCase()}
           </Badge>
         </div>
-        <h1 className="text-3xl font-bold tracking-tight">{vulnerability.title}</h1>
+        {aiExplanation?.vulnerabilityTitle && (
+          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
+            <Sparkles className="h-3.5 w-3.5" />
+            AI-Generated Vulnerability Title
+          </div>
+        )}
+        <h1 className="text-3xl font-bold tracking-tight">{effectiveTitle}</h1>
+        {aiExplanation?.vulnerabilityTitle &&
+          vulnerability.title !== aiExplanation.vulnerabilityTitle && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Original title: {vulnerability.title}
+            </p>
+          )}
         <p className="text-muted-foreground mt-2">{vulnerability.description}</p>
       </div>
 
@@ -286,12 +415,6 @@ export default function VulnerabilityDetailPage() {
           <CheckCircle className="h-4 w-4 mr-2" />
           Mark as Fixed
         </Button>
-        {!vulnerability.ai_explanation && (
-          <Button variant="outline" onClick={handleGenerateAI}>
-            <Sparkles className="h-4 w-4 mr-2" />
-            Explain with AI
-          </Button>
-        )}
       </div>
 
       {/* Main Content Grid */}
@@ -368,18 +491,13 @@ export default function VulnerabilityDetailPage() {
             </Card>
           )}
 
-          {/* Risk Context */}
-          {vulnerability.risk_context && (
-            <div>
-              <h3 className="text-lg font-semibold mb-4">Risk Context</h3>
-              <RiskContextGrid riskContext={vulnerability.risk_context} />
-            </div>
-          )}
-
           {/* AI Explanation */}
           <AIExplanationPanel
-            explanation={vulnerability.ai_explanation}
-            vulnerableCode={vulnerability.scanner_metadata?.code_snippet}
+            state={aiState}
+            explanation={aiExplanation}
+            errorMessage={aiErrorMessage}
+            onGenerate={() => triggerAIExplanation(false)}
+            onRetry={() => triggerAIExplanation(true)}
           />
         </div>
 

@@ -1,5 +1,6 @@
 // src/middleware/gatekeepers.ts
 import type { FastifyRequest, FastifyReply } from "fastify";
+import { normalizePlanName } from "../modules/entitlements/limits";
 
 
 /**
@@ -126,11 +127,9 @@ export async function requireTeamPlan(
 ) {
     // Check workspace plan first (Team/Enterprise workspaces)
     if (request.workspace) {
-        const allowedPlans = ["Team", "Enterprise"];
-        // Also check if personal workspace owner has a plan on their profile?
-        // Ideally plan is unified on workspace object now.
-        // Assuming workspace.plan is populated correctly.
-        if (!allowedPlans.includes(request.workspace.plan) && !allowedPlans.includes(request.profile?.plan || 'Free')) {
+        const allowedPlans = ["Team", "Enterprise"] as const;
+        const workspacePlan = normalizePlanName(request.workspace.plan);
+        if (!allowedPlans.includes(workspacePlan)) {
              throw request.server.httpErrors.forbidden(
                 `This feature requires a Team or Enterprise plan.`
             );
@@ -160,7 +159,8 @@ export async function requireEnterprisePlan(
     reply: FastifyReply
 ) {
      if (request.workspace) {
-        if (request.workspace.plan !== "Enterprise" && request.profile?.plan !== "Enterprise") {
+        const workspacePlan = normalizePlanName(request.workspace.plan);
+        if (workspacePlan !== "Enterprise") {
             throw request.server.httpErrors.forbidden(
                 `This feature requires an Enterprise plan.`
             );

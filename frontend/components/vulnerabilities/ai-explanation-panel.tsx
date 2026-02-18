@@ -1,98 +1,165 @@
 "use client";
 
-import React from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import React, { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, AlertCircle } from "lucide-react";
-
-interface AIExplanation {
-  summary: string;
-  why_it_matters?: string;
-  annotated_code?: string;
-  generated_at: string;
-  model_version: string;
-}
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  Loader2,
+  Sparkles,
+} from "lucide-react";
+import type {
+  AiExplanationState,
+  VulnerabilityExplanation,
+} from "@/lib/api/vulnerabilities";
 
 interface AIExplanationPanelProps {
-  explanation: AIExplanation | null;
-  vulnerableCode?: string;
+  state: AiExplanationState;
+  explanation: VulnerabilityExplanation | null;
+  errorMessage?: string | null;
+  onGenerate: () => void;
+  onRetry: () => void;
 }
 
-export function AIExplanationPanel({ explanation, vulnerableCode }: AIExplanationPanelProps) {
-  if (!explanation) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-primary" />
-            AI Explanation
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            No AI explanation available yet. Click "Explain with AI" to generate one.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
+export function AIExplanationPanel({
+  state,
+  explanation,
+  errorMessage,
+  onGenerate,
+  onRetry,
+}: AIExplanationPanelProps) {
+  const [stepsOpen, setStepsOpen] = useState(true);
 
   return (
-    <Card>
+    <Card className="border-primary/20 bg-gradient-to-b from-primary/5 to-transparent">
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-base">
             <Sparkles className="h-5 w-5 text-primary" />
-            AI Explanation
+            AI-Powered Explanation & Step-by-Step Fix
           </CardTitle>
-          <Badge variant="outline" className="text-xs">
-            Cached
-          </Badge>
+          {state === "ready" && (
+            <Badge variant="outline" className="border-primary/40 text-primary">
+              Ready
+            </Badge>
+          )}
+          {(state === "queued" || state === "processing") && (
+            <Badge variant="secondary">Running</Badge>
+          )}
+          {state === "failed" && <Badge variant="destructive">Failed</Badge>}
         </div>
       </CardHeader>
+
       <CardContent className="space-y-4">
-        {/* Summary */}
-        <div className="flex gap-3">
-          <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm leading-relaxed">{explanation.summary}</p>
-          </div>
-        </div>
-
-        {/* Why It Matters */}
-        {explanation.why_it_matters && (
-          <div>
-            <h4 className="font-semibold text-sm mb-2">
-              Why It Matters in Your Codebase
-            </h4>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              {explanation.why_it_matters}
+        {state === "idle" && (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Generate an AI explanation with exploit impact and actionable remediation steps.
             </p>
+            <Button size="sm" onClick={onGenerate}>
+              <Sparkles className="mr-2 h-4 w-4" />
+              Generate AI Explanation
+            </Button>
           </div>
         )}
 
-        {/* Annotated Code */}
-        {(explanation.annotated_code || vulnerableCode) && (
-          <div>
-            <h4 className="font-semibold text-sm mb-2">
-              Annotated Vulnerable Code
-            </h4>
-            <pre className="bg-muted p-4 rounded-lg text-xs overflow-x-auto font-mono">
-              {explanation.annotated_code || vulnerableCode}
-            </pre>
-            {explanation.annotated_code && (
-              <p className="text-xs text-muted-foreground mt-2">
-                <span className="text-yellow-500">→</span> AI-generated inline comments explain the vulnerability
+        {(state === "queued" || state === "processing") && (
+          <div className="flex items-start gap-3 rounded-lg border border-primary/25 bg-background/70 p-3">
+            <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-primary" />
+            <div>
+              <p className="text-sm font-medium">AI analysis in progress</p>
+              <p className="text-xs text-muted-foreground">
+                This runs asynchronously and does not block the vulnerability page.
               </p>
-            )}
+            </div>
           </div>
         )}
 
-        {/* Metadata */}
-        <div className="text-xs text-muted-foreground pt-2 border-t">
-          Generated {new Date(explanation.generated_at).toLocaleDateString()} •{" "}
-          Model: {explanation.model_version}
-        </div>
+        {state === "failed" && (
+          <div className="space-y-3">
+            <div className="flex gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+              <AlertCircle className="mt-0.5 h-4 w-4" />
+              <span>{errorMessage || "Failed to generate AI explanation."}</span>
+            </div>
+            <Button size="sm" variant="outline" onClick={onRetry}>
+              Retry AI Generation
+            </Button>
+          </div>
+        )}
+
+        {state === "ready" && explanation && (
+          <div className="space-y-4">
+            <div className="rounded-md border bg-background/70 p-3">
+              <p className="text-sm leading-relaxed">{explanation.summary}</p>
+            </div>
+
+            <div>
+              <h4 className="mb-1 text-sm font-semibold">Impact</h4>
+              <p className="text-sm text-muted-foreground">{explanation.impact}</p>
+            </div>
+
+            <div>
+              <h4 className="mb-1 text-sm font-semibold">Exploitability</h4>
+              <p className="text-sm text-muted-foreground">
+                {explanation.exploitScenario}
+              </p>
+            </div>
+
+            <div>
+              <h4 className="mb-1 text-sm font-semibold">Remediation Overview</h4>
+              <p className="text-sm text-muted-foreground">
+                {explanation.remediationOverview}
+              </p>
+            </div>
+
+            <Collapsible open={stepsOpen} onOpenChange={setStepsOpen}>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="w-full justify-between px-2">
+                  <span className="font-semibold">Step-by-Step Fix Plan</span>
+                  <ChevronDown
+                    className={`h-4 w-4 transition-transform ${
+                      stepsOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-2 pt-2">
+                {explanation.stepByStepFix.map((step, index) => (
+                  <div
+                    key={`${step}-${index}`}
+                    className="flex items-start gap-2 rounded-md border bg-background px-3 py-2"
+                  >
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground">
+                        Action {index + 1}
+                      </p>
+                      <p className="text-sm">{step}</p>
+                    </div>
+                  </div>
+                ))}
+              </CollapsibleContent>
+            </Collapsible>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline">
+                Confidence {(explanation.confidence * 100).toFixed(0)}%
+              </Badge>
+              <Badge variant="outline">Citations {explanation.citations.length}</Badge>
+              {explanation.provider && (
+                <Badge variant="outline">{explanation.provider}</Badge>
+              )}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -39,6 +39,7 @@ export interface Scan {
   duration_seconds: number | null;
   progress_percentage?: number | null; 
   progress_stage?: string | null;
+  files_scanned?: number ;
   
   // AI enrichment (separate lifecycle)
   ai_enrichment_status: AIEnrichmentStatus;

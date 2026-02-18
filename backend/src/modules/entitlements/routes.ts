@@ -21,9 +21,7 @@ export default async function entitlementsRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/:workspaceId/entitlements', { preHandler }, async (request, reply) => {
     const { workspaceId } = request.params as { workspaceId: string };
-    const { plan } = request.workspace!;
-
-    const usage = await service.getWorkspaceUsage(workspaceId, plan);
+    const usage = await service.getWorkspaceUsage(workspaceId);
 
     return reply.send({
       success: true,
@@ -39,12 +37,13 @@ export default async function entitlementsRoutes(fastify: FastifyInstance) {
     '/:workspaceId/entitlements/features',
     { preHandler },
     async (request, reply) => {
-      const { plan } = request.workspace!;
+      const { workspaceId } = request.params as { workspaceId: string };
       const { feature } = request.query;
 
       // If feature is specified, check single feature
       if (feature) {
-        const hasAccess = await service.hasFeature(plan, feature);
+        const plan = await service.getWorkspacePlan(workspaceId);
+        const hasAccess = await service.hasFeature(workspaceId, feature);
 
         return reply.send({
           success: true,
@@ -57,14 +56,11 @@ export default async function entitlementsRoutes(fastify: FastifyInstance) {
       }
 
       // Otherwise, return all features for the plan
-      const features = await service.getPlanFeatures(plan);
+      const features = await service.getPlanFeatures(workspaceId);
 
       return reply.send({
         success: true,
-        data: {
-          plan,
-          features,
-        },
+        data: features,
       });
     }
   );

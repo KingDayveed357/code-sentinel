@@ -556,13 +556,35 @@ export class WorkspaceService {
       );
     }
 
-    // Send email
-    await sendWorkspaceInvitationEmail(
-      email,
-      invitation.token,
-      workspaceId,
-      workspace.name
-    );
+    // Get inviter's name for email
+    const { data: inviter } = await this.fastify.supabase
+      .from('users')
+      .select('full_name, email')
+      .eq('id', invitedBy)
+      .single();
+
+    const inviterName = inviter?.full_name || inviter?.email || 'A team member';
+
+    // Send email with inviter name and role
+    // Note: Email failure should not block invitation creation
+    try {
+      await sendWorkspaceInvitationEmail(
+        email,
+        invitation.token,
+        workspaceId,
+        workspace.name,
+        inviterName,
+        role
+      );
+    } catch (emailError) {
+      // Log the error but don't fail the invitation
+      this.fastify.log.error(
+        { error: emailError, email, workspaceId },
+        'Failed to send invitation email, but invitation was created'
+      );
+      console.error('⚠️  Email sending failed, but invitation was created successfully');
+      console.error('The user can still be invited manually using the token from the database');
+    }
 
     await this.logActivity(
       workspaceId,

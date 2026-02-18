@@ -23,35 +23,54 @@ const EMAIL_CONFIG: EmailConfig = {
  * @param token - Unique invitation token
  * @param workspaceId - Workspace ID for context
  * @param workspaceName - Workspace name for email content
+ * @param inviterName - Name of the person who sent the invite
+ * @param role - Role being assigned to the invitee
  */
 export async function sendWorkspaceInvitationEmail(
   email: string,
   token: string,
   workspaceId: string,
-  workspaceName: string
+  workspaceName: string,
+  inviterName?: string,
+  role?: string
 ): Promise<void> {
-  const inviteUrl = `${env.NEXT_PUBLIC_FRONTEND_URL}/workspaces/invite/${token}`;
+  const inviteUrl = `${env.NEXT_PUBLIC_FRONTEND_URL}/accept-invite?token=${token}`;
   
-  // For development: Just log the invitation
+  // Log invitation details in development mode
   if (env.NODE_ENV === 'development') {
     console.log('\n==============================================');
     console.log('📧 WORKSPACE INVITATION EMAIL');
     console.log('==============================================');
     console.log(`To: ${email}`);
     console.log(`Workspace: ${workspaceName} (${workspaceId})`);
+    console.log(`Invited by: ${inviterName || 'Unknown'}`);
+    console.log(`Role: ${role || 'member'}`);
     console.log(`Invitation Link: ${inviteUrl}`);
     console.log(`Token: ${token}`);
-    console.log('==============================================\n');
-    return;
+    console.log('==============================================');
+    console.log('📤 Attempting to send email...');
   }
 
-  // For production: Send via email service (Resend, SendGrid, etc.)
-  await sendEmail({
-    to: email,
-    subject: `You've been invited to join ${workspaceName} on CodeSentinel`,
-    html: getWorkspaceInvitationEmailHTML(inviteUrl, email, workspaceName),
-    text: getWorkspaceInvitationEmailText(inviteUrl, workspaceName),
-  });
+  // Send email in both development and production
+  try {
+    await sendEmail({
+      to: email,
+      subject: `You've been invited to join ${workspaceName} on CodeSentinel`,
+      html: getWorkspaceInvitationEmailHTML(inviteUrl, email, workspaceName, inviterName, role),
+      text: getWorkspaceInvitationEmailText(inviteUrl, workspaceName, inviterName, role),
+    });
+
+    if (env.NODE_ENV === 'development') {
+      console.log('✅ Email sent successfully!');
+      console.log('==============================================\n');
+    }
+  } catch (error) {
+    console.error('❌ Failed to send invitation email:', error);
+    if (env.NODE_ENV === 'development') {
+      console.log('==============================================\n');
+    }
+    throw error; // Re-throw to let caller handle
+  }
 }
 
 /**
@@ -93,8 +112,9 @@ export async function sendTeamInvitationEmail(
 /**
  * Send email using configured email service
  * 
- * Default implementation uses fetch to call Resend API
- * Replace with your preferred email service (SendGrid, AWS SES, etc.)
+ * Tries providers in order:
+ * 1. Resend (recommended, if API key provided)
+ * 2. SendGrid (fallback, if API key provided)
  */
 async function sendEmail(params: {
   to: string;
@@ -102,21 +122,56 @@ async function sendEmail(params: {
   html: string;
   text: string;
 }): Promise<void> {
-  // Example: Using Resend (https://resend.com)
-  if (env.RESEND_API_KEY) {
-    await sendViaResend(params);
-    return;
+  const errors: Array<{ provider: string; error: any }> = [];
+
+  // Try Resend first (recommended provider)
+  if (env.RESEND_API_KEY && env.RESEND_API_KEY !== 'your-resend-api-key' && !env.RESEND_API_KEY.startsWith('re_test')) {
+    try {
+      console.log(`[Email] Attempting to send via Resend to ${params.to}...`);
+      await sendViaResend(params);
+      console.log(`[Email] ✅ Successfully sent via Resend`);
+      return;
+    } catch (error) {
+      console.warn(`[Email] ⚠️  Resend failed:`, error);
+      errors.push({ provider: 'Resend', error });
+    }
   }
 
-  // Example: Using SendGrid
-  if (env.SENDGRID_API_KEY) {
-    await sendViaSendGrid(params);
-    return;
+  // Try SendGrid as fallback
+  if (env.SENDGRID_API_KEY && env.SENDGRID_API_KEY !== 'your-sendgrid-api-key' && !env.SENDGRID_API_KEY.startsWith('SG.test')) {
+    try {
+      console.log(`[Email] Attempting to send via SendGrid to ${params.to}...`);
+      await sendViaSendGrid(params);
+      console.log(`[Email] ✅ Successfully sent via SendGrid`);
+      return;
+    } catch (error) {
+      console.warn(`[Email] ⚠️  SendGrid failed:`, error);
+      errors.push({ provider: 'SendGrid', error });
+    }
   }
 
-  // Fallback: Log warning
-  console.warn('No email service configured. Email not sent:', params.to);
-  console.log('Configure RESEND_API_KEY or SENDGRID_API_KEY in environment variables');
+  // No valid providers configured or all failed
+  if (errors.length === 0) {
+    const errorMsg = 'No email service configured. Please set RESEND_API_KEY or SENDGRID_API_KEY in environment variables.';
+    console.error(`❌ ${errorMsg}`);
+    console.error('Email details:', {
+      to: params.to,
+      subject: params.subject,
+    });
+    throw new Error(errorMsg);
+  }
+
+  // All providers failed
+  console.error('❌ All email providers failed:', errors);
+  console.error('Email details:', {
+    to: params.to,
+    subject: params.subject,
+    providers_tried: errors.map(e => e.provider).join(', ')
+  });
+  
+  throw new Error(
+    `Failed to send email after trying ${errors.length} provider(s): ${errors.map(e => e.provider).join(', ')}`
+  );
 }
 
 /**
@@ -191,7 +246,18 @@ async function sendViaSendGrid(params: {
 /**
  * Generate HTML email template for workspace invitation
  */
-function getWorkspaceInvitationEmailHTML(inviteUrl: string, email: string, workspaceName: string): string {
+function getWorkspaceInvitationEmailHTML(
+  inviteUrl: string, 
+  email: string, 
+  workspaceName: string,
+  inviterName?: string,
+  role?: string
+): string {
+  const roleDisplay = role ? role.charAt(0).toUpperCase() + role.slice(1) : 'Member';
+  const inviterText = inviterName 
+    ? `<strong>${inviterName}</strong> has invited` 
+    : 'You have been invited to';
+  
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -224,7 +290,7 @@ function getWorkspaceInvitationEmailHTML(inviteUrl: string, email: string, works
               </h2>
               
               <p style="margin: 0 0 20px; font-size: 16px; line-height: 24px; color: #6b7280;">
-                Someone has invited <strong style="color: #111827;">${email}</strong> to collaborate on <strong>${workspaceName}</strong> workspace on CodeSentinel.
+                ${inviterText} <strong style="color: #111827;">${email}</strong> to collaborate on the <strong>${workspaceName}</strong> workspace on CodeSentinel as a <strong>${roleDisplay}</strong>.
               </p>
 
               <p style="margin: 0 0 30px; font-size: 16px; line-height: 24px; color: #6b7280;">
@@ -275,11 +341,21 @@ function getWorkspaceInvitationEmailHTML(inviteUrl: string, email: string, works
 /**
  * Generate plain text email for workspace invitation
  */
-function getWorkspaceInvitationEmailText(inviteUrl: string, workspaceName: string): string {
+function getWorkspaceInvitationEmailText(
+  inviteUrl: string, 
+  workspaceName: string,
+  inviterName?: string,
+  role?: string
+): string {
+  const roleDisplay = role ? role.charAt(0).toUpperCase() + role.slice(1) : 'Member';
+  const inviterText = inviterName 
+    ? `${inviterName} has invited you` 
+    : 'You have been invited';
+  
   return `
 You've been invited to join ${workspaceName} on CodeSentinel
 
-Someone has invited you to collaborate on the ${workspaceName} workspace on CodeSentinel, a security scanning platform for developers.
+${inviterText} to collaborate on the ${workspaceName} workspace on CodeSentinel as a ${roleDisplay}.
 
 To accept the invitation, visit this link:
 ${inviteUrl}

@@ -17,8 +17,9 @@ interface RunScanModalProps {
   repositoryName: string;
   defaultBranch: string;
   workspaceId: string;
-  userPlan?: "free" | "dev" | "team" | "enterprise";
+  workspacePlan?: "free" | "dev" | "team" | "enterprise";
   onScanStarted?: () => void;
+  isScanning?: boolean;
 }
 
 export function RunScanModal({
@@ -28,8 +29,9 @@ export function RunScanModal({
   repositoryName,
   defaultBranch,
   workspaceId,
-  userPlan = "free",
+  workspacePlan = "free",
   onScanStarted,
+  isScanning = false,
 }: RunScanModalProps) {
   const [selectedType, setSelectedType] = useState<"quick" | "full">("quick");
   const [isStarting, setIsStarting] = useState(false);
@@ -65,7 +67,8 @@ export function RunScanModal({
     }
   };
 
-  const isPremiumPlan = userPlan === "dev" || userPlan === "team" || userPlan === "enterprise";
+  // CRITICAL FIX: Use workspace plan, not user plan
+  const isPremiumPlan = workspacePlan === "dev" || workspacePlan === "team" || workspacePlan === "enterprise";
   const canUseFullScan = isPremiumPlan;
 
   return (

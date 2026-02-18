@@ -497,9 +497,9 @@ export default function MembersPage() {
                                         Revoke
                                      </Button>
                                      {process.env.NODE_ENV === 'development' && (
-                                         <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted p-1 rounded">
+                                         <div className="flex items-center gap-2 text-xs truncate text-muted-foreground bg-muted p-1 rounded">
                                             <LinkIcon className="h-3 w-3" />
-                                            <span className="max-w-[150px] trucate select-all font-mono">
+                                            <span className="max-w-[150px]  select-all font-mono">
                                                 {window.location.origin}/accept-invite?token={inv.token}
                                             </span>
                                          </div>

@@ -650,13 +650,13 @@ export function ProjectsList() {
         </>
       )}
 
-      <DisconnectProjectDialog 
+      {/* <DisconnectProjectDialog 
         project={projectToDelete}
         workspaceId={workspace!.id}
         open={!!projectToDelete}
         onOpenChange={(open) => !open && setProjectToDelete(null)}
         onSuccess={onDisconnectSuccess}
-      />
+      /> */}
 
       {/* Run Scan Modal */}
       {selectedProject && workspace && (
@@ -667,7 +667,7 @@ export function ProjectsList() {
           repositoryName={selectedProject.name}
           defaultBranch={selectedProject.default_branch}
           workspaceId={workspace.id}
-          userPlan="free" // TODO: Get from workspace/user context
+          workspacePlan={workspace.plan.toLowerCase() as "free" | "dev" | "team" | "enterprise"}
           onScanStarted={handleScanStarted}
         />
       )}
