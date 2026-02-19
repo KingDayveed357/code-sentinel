@@ -127,9 +127,11 @@ export async function requireTeamPlan(
 ) {
     // Check workspace plan first (Team/Enterprise workspaces)
     if (request.workspace) {
-        const allowedPlans = ["Team", "Enterprise"] as const;
         const workspacePlan = normalizePlanName(request.workspace.plan);
-        if (!allowedPlans.includes(workspacePlan)) {
+        const hasRequiredPlan =
+            workspacePlan === "Team" || workspacePlan === "Enterprise";
+
+        if (!hasRequiredPlan) {
              throw request.server.httpErrors.forbidden(
                 `This feature requires a Team or Enterprise plan.`
             );

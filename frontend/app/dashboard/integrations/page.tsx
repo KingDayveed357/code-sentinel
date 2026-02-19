@@ -17,6 +17,7 @@ import {
   Check,
   Settings,
   ExternalLink,
+  Lock,
 } from "lucide-react";
 import Link from "next/link";
 import { integrationsApi, type SafeIntegration } from "@/lib/api/integrations";
@@ -24,6 +25,13 @@ import { useWorkspace } from "@/hooks/use-workspace";
 import { useWorkspaceChangeListener } from "@/hooks/use-workspace-change-listener";
 import { IntegrationCardSkeleton, WorkspaceNameSkeleton } from "@/components/dashboard/integrations-skeleton";
 import { workspaceKeys } from "@/hooks/use-dashboard-data";
+import { usePermissions } from "@/hooks/use-permissions";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface IntegrationConfig {
   id: string;
@@ -145,6 +153,8 @@ export default function IntegrationsPage() {
   const loading = isLoading || isSwitching || initializing;
   const error = queryError ? (queryError as Error).message || "Failed to load integrations" : null;
 
+  const { canManageIntegrations } = usePermissions();
+
   // Helper to check if integration is connected
   const isConnected = (integrationId: string): SafeIntegration | undefined => {
     return connectedIntegrations.find(i => i.provider === integrationId && i.connected);
@@ -179,6 +189,23 @@ export default function IntegrationsPage() {
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
+      )}
+
+      {/* Access Restriction Banner */}
+      {!canManageIntegrations && !loading && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/50 dark:bg-blue-950/20">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/40">
+              <Lock className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <h3 className="font-medium text-blue-900 dark:text-blue-100">Access Restricted</h3>
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                GitHub integrations are managed by your workspace admin.
+              </p>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Integration Categories - All static titles always visible */}
@@ -278,29 +305,53 @@ export default function IntegrationsPage() {
 
                       {integration.available && (
                         <div className="flex gap-2">
-                          {connected ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="flex-1"
-                              asChild
-                            >
-                              <Link href={`/dashboard/integrations/${integration.id}`}>
-                                <Settings className="mr-2 h-4 w-4" />
-                                Settings
-                              </Link>
-                            </Button>
+                          {canManageIntegrations ? (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className="flex-1">
+                                    {connected ? (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="w-full"
+                                        asChild
+                                      >
+                                        <Link href={`/dashboard/integrations/${integration.id}`}>
+                                          <Settings className="mr-2 h-4 w-4" />
+                                          Settings
+                                        </Link>
+                                      </Button>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        className="w-full"
+                                        asChild
+                                      >
+                                        <Link href={`/dashboard/integrations/${integration.id}`}>
+                                          Connect
+                                          <ExternalLink className="ml-2 h-4 w-4" />
+                                        </Link>
+                                      </Button>
+                                    )}
+                                  </div>
+                                </TooltipTrigger>
+                              </Tooltip>
+                            </TooltipProvider>
                           ) : (
-                            <Button
-                              size="sm"
-                              className="flex-1"
-                              asChild
-                            >
-                              <Link href={`/dashboard/integrations/${integration.id}`}>
-                                Connect
-                                <ExternalLink className="ml-2 h-4 w-4" />
-                              </Link>
-                            </Button>
+                            <div className="w-full flex items-center justify-between px-3 py-2 rounded-md bg-muted/50 border border-dashed border-muted-foreground/20">
+                              <span className="text-xs text-muted-foreground font-medium">Managed by Admin</span>
+                              <TooltipProvider>
+                                <Tooltip delayDuration={0}>
+                                  <TooltipTrigger asChild>
+                                    <Lock className="h-3 w-3 text-muted-foreground/70" />
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>GitHub integrations are managed by your workspace admin.</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
                           )}
                         </div>
                       )}

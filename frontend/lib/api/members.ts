@@ -7,14 +7,14 @@ export interface WorkspaceMember {
   email: string;
   full_name: string | null;
   avatar_url: string | null;
-  role: 'owner' | 'admin' | 'member' | 'viewer';
+  role: 'owner' | 'admin' | 'developer' | 'viewer';
   status: 'active' | 'pending' | 'removed';
   joined_at?: string;
 }
 
 export interface InviteMemberRequest {
   email: string;
-  role: 'owner' | 'admin' | 'member' | 'viewer';
+  role: 'owner' | 'admin' | 'developer' | 'viewer';
 }
 
 export interface Invitation {
@@ -96,7 +96,7 @@ export const membersApi = {
   updateMemberRole: async (
     workspaceId: string,
     memberId: string,
-    role: 'owner' | 'admin' | 'member' | 'viewer'
+    role: 'owner' | 'admin' | 'developer' | 'viewer'
   ): Promise<void> => {
     await apiFetch(`/workspaces/${workspaceId}/members/${memberId}/role`, {
       method: "PATCH",
@@ -114,7 +114,7 @@ export const membersApi = {
         return 'default';
       case 'admin':
         return 'secondary';
-      case 'member':
+      case 'developer':
         return 'outline';
       case 'viewer':
         return 'outline';
@@ -127,6 +127,7 @@ export const membersApi = {
    * Get role display name
    */
   getRoleDisplayName: (role: string): string => {
+    if (role === 'developer') return 'Developer';
     return role.charAt(0).toUpperCase() + role.slice(1);
   },
 
@@ -143,6 +144,14 @@ export const membersApi = {
 
   canChangeRoles: (role: string): boolean => {
     return role === 'owner';
+  },
+
+  /**
+   * Alias for getMembers — used by project settings page
+   */
+  list: async (workspaceId: string): Promise<{ members: WorkspaceMember[] }> => {
+    const members = await membersApi.getMembers(workspaceId);
+    return { members };
   },
 
   /**

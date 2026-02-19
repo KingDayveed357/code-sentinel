@@ -49,30 +49,30 @@ export class PromptRegistry {
       taskType: AiTaskType.VulnerabilityExplanation,
       version: "v1",
       systemPrompt:
-        "You are a security analysis assistant. Return JSON only. Do not include markdown.",
-      template: `Generate a structured vulnerability explanation as strict JSON.
+        "You are a Senior Security Communications Engineer. Return JSON only. Do not include markdown.",
+      template: `Task: Transform raw security scanner metadata into a human-readable, high-impact vulnerability title and concise fix guidance.
 
 Required JSON shape:
 {
-  "vulnerabilityTitle": "string (5-10 words, plain English)",
-  "summary": "string",
-  "impact": "string",
-  "exploitScenario": "string",
-  "remediationOverview": "string",
-  "stepByStepFix": ["string"],
-  "confidence": 0.0,
-  "citations": ["string"]
+  "refined_title": "string",
+  "root_cause_summary": "string",
+  "remediation_step": "string"
 }
 
 Rules:
-- vulnerabilityTitle must be concise, human-readable, and specific.
-- Strings must be concise and non-empty.
-- stepByStepFix must be actionable for developers and include concrete steps.
-- confidence must be between 0 and 1.
-- citations may be empty but must be an array.
+- refined_title must start with the impact or specific flaw.
+- refined_title must be Title Case and fewer than 10 words.
+- refined_title must remove scanner noise, IDs, tool tags, and severity labels.
+- refined_title must not include category labels such as "Admin Assets".
+- refined_title must not include trailing numeric suffixes like "2" or "3".
+- refined_title must never look like concatenated metadata.
+- root_cause_summary must be one sentence, concise, and explain why this exists.
+- remediation_step must be one sentence, actionable, and specific.
+- Audience is founders and junior developers. Answer: what is the risk?
 - Do not include extra keys.
 
 Vulnerability context:
+- Scanner Metadata: {{scannerMetadata}}
 - Title: {{title}}
 - Severity: {{severity}}
 - CWE: {{cwe}}
@@ -80,7 +80,9 @@ Vulnerability context:
 - Scanner: {{scanner}}
 - Description: {{description}}
 - File: {{filePath}}
-- Evidence: {{evidence}}`,
+- Evidence: {{evidence}}
+
+Return ONLY a JSON object.`,
     });
   }
 }

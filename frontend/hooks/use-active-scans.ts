@@ -3,19 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { scansApi } from "@/lib/api/scans";
 
-export interface ActiveScan {
-  id: string;
-  status: "queued" | "processing" | "completed" | "failed";
-  repository: {
-    id: string;
-    name: string;
-  };
-  created_at: string;
-  completed_at: string | null;
-  error_message: string | null;
-  progress_percentage: number | null;
-  progress_stage: string | null;
-}
+import type { Scan } from "@/lib/api/scans";
+
+export type ActiveScan = Scan;
 
 /**
  * ✅ WORKSPACE-GLOBAL SCAN STORE
@@ -96,19 +86,10 @@ export function useActiveScans() {
         combined.forEach(s => uniqueMap.set(s.id, s));
         const unique = Array.from(uniqueMap.values());
 
-        // Map to ActiveScan interface with progress data
+        // Map to full Scan interface
         return unique.map((scan: any) => ({
-          id: scan.id,
-          status: scan.status,
-          repository: {
-            id: scan.repository.id,
-            name: scan.repository.name,
-          },
-          created_at: scan.created_at,
-          completed_at: scan.completed_at,
-          error_message: scan.error_message,
-          progress_percentage: scan.progress_percentage ?? null,
-          progress_stage: scan.progress_stage ?? null,
+          ...scan,
+          // Ensure nested objects are preserved if needed, but spread should handle top-level
         }));
       } catch (error) {
         console.error("Failed to fetch active scans:", error);

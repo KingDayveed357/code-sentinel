@@ -474,14 +474,11 @@ test("Cache prevents duplicate provider calls for same vulnerability", async () 
       processorCalls += 1;
       return {
         payload: {
-          vulnerabilityTitle: "Cache test vulnerability title for developers",
-          summary: "Cache test summary",
-          impact: "Cache test impact",
-          exploitScenario: "Cache test exploit scenario",
-          remediationOverview: "Cache test remediation",
-          stepByStepFix: ["Cache test action one", "Cache test action two"],
-          confidence: 0.7,
-          citations: [],
+          refined_title: "Cache Test Authentication Bypass Risk",
+          root_cause_summary:
+            "Unsafe token validation allows attackers to bypass authentication checks.",
+          remediation_step:
+            "Enforce strict signature, issuer, and audience validation before granting access.",
         },
         provider: "openai",
         model: "gpt-4o-mini",
@@ -549,28 +546,21 @@ test("Deterministic fallback returns valid schema when providers fail", async ()
 
   assert.equal(result.provider, "deterministic");
   assert.equal(result.fallbackUsed, true);
-  assert.equal(parsed.confidence, 0.2);
-  assert.deepEqual(parsed.citations, []);
-  assert.ok(parsed.vulnerabilityTitle.split(/\s+/).length >= 5);
-  assert.ok(parsed.stepByStepFix.length > 0);
+  assert.ok(parsed.refined_title.split(/\s+/).filter(Boolean).length > 0);
+  assert.ok(parsed.root_cause_summary.endsWith("."));
+  assert.ok(parsed.remediation_step.endsWith("."));
 });
 
-test("AI-generated titles are human-readable and within 5-10 words", async () => {
+test("AI-generated titles are human-readable and under 10 words", async () => {
   const groq = new MockProvider("groq", async () => ({
     provider: "groq",
     model: "llama",
     rawText: JSON.stringify({
-      vulnerabilityTitle: "Critical auth bypass in token validation flow",
-      summary: "Authentication checks can be bypassed.",
-      impact: "Unauthorized users can access protected resources.",
-      exploitScenario: "An attacker forges token claims to bypass authorization.",
-      remediationOverview: "Add strict signature verification and audience checks.",
-      stepByStepFix: [
-        "Validate signature using the current signing key.",
-        "Enforce issuer, audience, and expiration checks.",
-      ],
-      confidence: 0.86,
-      citations: ["custom.rule.auth-bypass"],
+      refined_title: "Authentication Bypass in Token Validation Flow",
+      root_cause_summary:
+        "Token claim validation is incomplete, allowing forged claims to pass authorization.",
+      remediation_step:
+        "Validate signature, issuer, audience, and expiration before accepting tokens.",
     }),
     latencyMs: 8,
   }));
@@ -586,11 +576,51 @@ test("AI-generated titles are human-readable and within 5-10 words", async () =>
   });
 
   const result = await processor.generate(buildVulnerabilityFixture(), "v1");
-  const titleWords = result.payload.vulnerabilityTitle.split(/\s+/).filter(Boolean);
+  const titleWords = result.payload.refined_title.split(/\s+/).filter(Boolean);
 
   assert.equal(result.provider, "groq");
-  assert.ok(titleWords.length >= 5 && titleWords.length <= 10);
-  assert.ok(/^[A-Za-z0-9]/.test(result.payload.vulnerabilityTitle));
+  assert.ok(titleWords.length > 0 && titleWords.length < 10);
+  assert.ok(/^[A-Za-z0-9]/.test(result.payload.refined_title));
+});
+
+test("Title sanitizer removes metadata leakage and numeric suffixes", async () => {
+  const groq = new MockProvider("groq", async () => ({
+    provider: "groq",
+    model: "llama",
+    rawText: JSON.stringify({
+      refined_title: "Missing Healthcheck 2 Misconfiguration Admin Assets",
+      root_cause_summary:
+        "Container health checks are missing and service health cannot be verified.",
+      remediation_step:
+        "Add an explicit HEALTHCHECK instruction and verify it in CI.",
+    }),
+    latencyMs: 8,
+  }));
+  const openai = new MockProvider("openai", async () => {
+    throw new Error("should not be called");
+  });
+
+  const processor = new VulnerabilityExplanationProcessor({
+    providers: { groq, openai },
+    promptRegistry: new PromptRegistry(),
+    policyEngine: new PolicyEngine(),
+    logger: createLogger(),
+  });
+
+  const vulnerability = {
+    ...buildVulnerabilityFixture(),
+    title: "Missing Healthcheck 2 Misconfiguration Admin Assets",
+    rule_id: "missing-healthcheck-2-misconfiguration-admin-assets",
+    description:
+      "Missing container health checks can hide unhealthy instances and expand service outage risk.",
+  };
+
+  const result = await processor.generate(vulnerability, "v1");
+
+  assert.equal(result.provider, "groq");
+  assert.ok(!/\b\d+\b/.test(result.payload.refined_title));
+  assert.ok(!/\b(admin|assets?|generic)\b/i.test(result.payload.refined_title));
+  assert.ok(result.payload.refined_title.split(/\s+/).filter(Boolean).length >= 4);
 });
 
 async function run() {

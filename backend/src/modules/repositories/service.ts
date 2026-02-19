@@ -7,6 +7,7 @@ import { getRepositoryLimits } from "./validation";
 import { validateRepositoryImport } from "./validation";
 import { EntitlementsService } from "../entitlements/service";
 import { IntegrationsRepository } from "../integrations/repository";
+import { logActivity } from "../../utils/activity-logger";
 
 /**
  * Import repositories
@@ -109,14 +110,15 @@ export async function getWorkspaceRepositories(
         status?: string;
         limit?: number;
         offset?: number;
-    } = {}
+    } = {},
+    userContext?: { userId: string; role: string }
 ): Promise<{
     repositories: DatabaseRepository[];
     total: number;
     limit: number;
     offset: number;
 }> {
-    const { search, provider, private: isPrivate, status, limit = 20, offset = 0 } = options;
+    const { search, provider, private: isPrivate, status, limit = 20, offset = 0, view } = options;
 
     // ✅ FIX: Check if status is a scan status (not a repository status)
     const scanStatuses = ["completed", "running", "normalizing", "ai_enriching", "failed", "pending", "cancelled", "never_scanned", "processing"];
@@ -138,6 +140,34 @@ export async function getWorkspaceRepositories(
         .select("*", { count: "exact" })
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false });
+
+    /**
+     * ✅ RBAC / View Filter Logic:
+     * 1. 'developer' role ALWAYS sees only assigned projects.
+     * 2. Other roles (owner, admin, viewer) see all by default, but can filter by 'assigned'.
+     */
+    const forceAssigned = userContext?.role === 'viewer' || view === 'assigned';
+
+    if (forceAssigned) {
+        const { data: assignments } = await fastify.supabase
+            .from('project_members')
+            .select('project_id')
+            .eq('user_id', userContext?.userId);
+            
+        const assignedIds = (assignments || []).map(a => a.project_id);
+        
+        if (assignedIds.length === 0) {
+            // No assignments -> return empty result immediately
+            return {
+                repositories: [],
+                total: 0,
+                limit,
+                offset
+            };
+        }
+        
+        query = query.in('id', assignedIds);
+    }
 
     if (search) {
         query = query.or(`name.ilike.%${search}%,full_name.ilike.%${search}%`);
@@ -321,20 +351,34 @@ async function filterRepositoriesByScanStatus(
 export async function getRepositoryById(
     fastify: FastifyInstance,
     workspaceId: string,
-    repoId: string
+    repoId: string,
+    userContext?: { userId: string; role: string }
 ): Promise<DatabaseRepository> {
-    const { data, error } = await fastify.supabase
+    const { data: repo, error } = await fastify.supabase
         .from("repositories")
         .select("*")
         .eq("id", repoId)
         .eq("workspace_id", workspaceId)
         .single();
 
-    if (error || !data) {
+    if (error || !repo) {
         throw fastify.httpErrors.notFound("Repository not found");
     }
 
-    return data as DatabaseRepository;
+    if (userContext?.role === 'developer') {
+         const { data: assignment } = await fastify.supabase
+            .from('project_members')
+            .select('id')
+            .eq('project_id', repoId)
+            .eq('user_id', userContext.userId)
+            .single();
+
+        if (!assignment) {
+             throw fastify.httpErrors.notFound("Repository not found"); // Hide existence
+        }
+    }
+
+    return repo as DatabaseRepository;
 }
 
 /**
@@ -370,8 +414,23 @@ export async function updateRepository(
         name?: string;
         default_branch?: string;
         status?: "active" | "inactive" | "error";
-    }
+    },
+    userContext?: { userId: string; role: string }
 ): Promise<DatabaseRepository> {
+    
+    // Check access first if needed
+    if (userContext?.role === 'viewer') {
+         const { data: assignment } = await fastify.supabase
+            .from('project_members')
+            .select('id')
+            .eq('project_id', repoId)
+            .eq('user_id', userContext.userId)
+            .single();
+
+        if (!assignment) {
+             throw fastify.httpErrors.notFound("Repository not found");
+        }
+    }
     const updateData = {
         ...updates,
         updated_at: new Date().toISOString(),
@@ -425,7 +484,9 @@ export async function listRepositories(
         status?: string;
         page?: number;
         limit?: number;
-    }
+        view?: 'all' | 'assigned';
+    },
+    userContext?: { userId: string; role: string }
 ) {
     const { page = 1, limit = 20, ...filters } = params;
     const offset = (page - 1) * limit;
@@ -434,7 +495,7 @@ export async function listRepositories(
         ...filters,
         limit,
         offset,
-    });
+    }, userContext);
 
     return {
         ...result,
@@ -591,7 +652,141 @@ export async function syncRepositories(
 export async function getRepository(
     fastify: FastifyInstance,
     workspaceId: string,
-    repoId: string
+    repoId: string,
+    userContext?: { userId: string; role: string }
 ): Promise<DatabaseRepository> {
-    return await getRepositoryById(fastify, workspaceId, repoId);
+    return await getRepositoryById(fastify, workspaceId, repoId, userContext);
+}
+
+/**
+ * Get members assigned to a project
+ */
+export async function getProjectMembers(
+    fastify: FastifyInstance,
+    workspaceId: string,
+    projectId: string
+) {
+    const { data: assignments, error } = await fastify.supabase
+        .from('project_members')
+        .select('id, user_id, assigned_by, created_at')
+        .eq('project_id', projectId)
+        .eq('workspace_id', workspaceId);
+
+    if (error) {
+        fastify.log.error({ error, projectId }, 'Failed to fetch project members');
+        throw fastify.httpErrors.internalServerError('Failed to fetch project members');
+    }
+
+    if (!assignments || assignments.length === 0) {
+        return [];
+    }
+
+    const userIds = Array.from(new Set(assignments.map((assignment: any) => assignment.user_id)));
+
+    const { data: users, error: usersError } = await fastify.supabase
+        .from('users')
+        .select('id, email, full_name, avatar_url')
+        .in('id', userIds);
+
+    if (usersError) {
+        fastify.log.error({ usersError, projectId }, 'Failed to fetch users for project members');
+        throw fastify.httpErrors.internalServerError('Failed to fetch project members');
+    }
+
+    const usersById = new Map((users || []).map((user: any) => [user.id, user]));
+
+    return assignments.map((assignment: any) => ({
+        ...assignment,
+        user: usersById.get(assignment.user_id) || null,
+    }));
+}
+
+/**
+ * Assign a member to a project
+ */
+export async function assignProjectMember(
+    fastify: FastifyInstance,
+    workspaceId: string,
+    projectId: string,
+    userId: string,
+    assignedBy: string
+) {
+    // 1. Verify user is a member of the workspace
+    const { data: member, error: memberError } = await fastify.supabase
+        .from('workspace_members')
+        .select('id')
+        .eq('workspace_id', workspaceId)
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .single();
+
+    if (memberError || !member) {
+        throw fastify.httpErrors.badRequest('User is not an active member of this workspace');
+    }
+
+    // 2. Insert assignment
+    const { data, error } = await fastify.supabase
+        .from('project_members')
+        .insert({
+            project_id: projectId,
+            user_id: userId,
+            workspace_id: workspaceId,
+            assigned_by: assignedBy
+        })
+        .select()
+        .single();
+
+    if (error) {
+        if (error.code === '23505') {
+            throw fastify.httpErrors.conflict('User is already assigned to this project');
+        }
+        fastify.log.error({ error, projectId, userId }, 'Failed to assign project member');
+        throw fastify.httpErrors.internalServerError('Failed to assign project member');
+    }
+
+    // Audit log — fire-and-forget
+    logActivity(fastify, {
+        workspaceId,
+        actorId: assignedBy,
+        action: 'project.member_assigned',
+        resourceType: 'project_member',
+        resourceId: projectId,
+        metadata: { user_id: userId, project_id: projectId },
+    });
+
+    return data;
+}
+
+/**
+ * Remove a member from a project
+ */
+export async function removeProjectMember(
+    fastify: FastifyInstance,
+    workspaceId: string,
+    projectId: string,
+    userId: string
+) {
+    const { error } = await fastify.supabase
+        .from('project_members')
+        .delete()
+        .eq('project_id', projectId)
+        .eq('user_id', userId)
+        .eq('workspace_id', workspaceId);
+
+    if (error) {
+        fastify.log.error({ error, projectId, userId }, 'Failed to remove project member');
+        throw fastify.httpErrors.internalServerError('Failed to remove project member');
+    }
+
+    // Audit log — fire-and-forget
+    logActivity(fastify, {
+        workspaceId,
+        actorId: null,
+        action: 'project.member_removed',
+        resourceType: 'project_member',
+        resourceId: projectId,
+        metadata: { user_id: userId, project_id: projectId },
+    });
+
+    return { success: true };
 }

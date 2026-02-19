@@ -28,7 +28,11 @@ export async function listRepositoriesController(
     const workspaceId = request.workspace!.id; 
     const params = listRepositoriesSchema.parse(request.query);
 
-    const result = await service.listRepositories(request.server, workspaceId, params);
+    // Pass user context for RBAC filtering
+    const userId = request.supabaseUser!.id;
+    const userRole = request.workspaceRole!;
+
+    const result = await service.listRepositories(request.server, workspaceId, params, { userId, role: userRole });
 
     return reply.send(result);
 }
@@ -107,7 +111,10 @@ export async function getRepositoryController(
     const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
 
-    const repository = await service.getRepository(request.server, workspaceId, id);
+    const userId = request.supabaseUser!.id;
+    const userRole = request.workspaceRole!;
+
+    const repository = await service.getRepository(request.server, workspaceId, id, { userId, role: userRole });
 
     return reply.send(repository);
 }
@@ -128,7 +135,8 @@ export async function updateRepositoryController(
         request.server,
         workspaceId,
         id,
-        updates
+        updates,
+        { userId: request.supabaseUser!.id, role: request.workspaceRole! }
     );
 
     return reply.send(repository);
@@ -280,6 +288,9 @@ export async function registerWebhookController(
     );
 
     if (!result.success) {
+        if (result.error?.toLowerCase().includes('integration') || result.error?.toLowerCase().includes('token')) {
+            throw request.server.httpErrors.preconditionFailed(result.error);
+        }
         throw request.server.httpErrors.internalServerError(
             result.error || 'Failed to register webhook'
         );
@@ -311,4 +322,60 @@ export async function deleteWebhookController(
     );
 
     return reply.send(result);
+}
+
+/**
+ * GET /repositories/:id/members
+ * List members assigned to a project
+ */
+export async function getProjectMembersController(
+    request: FastifyRequest<{ Params: any }>,
+    reply: FastifyReply
+) {
+    const workspaceId = request.workspace!.id;
+    const { id } = repositoryIdSchema.parse(request.params);
+
+    const members = await service.getProjectMembers(request.server, workspaceId, id);
+    return reply.send(members);
+}
+
+/**
+ * POST /repositories/:id/members
+ * Assign a workspace member to a project
+ */
+export async function assignProjectMemberController(
+    request: FastifyRequest<{ Params: any; Body: any }>,
+    reply: FastifyReply
+) {
+    const workspaceId = request.workspace!.id;
+    const { id } = repositoryIdSchema.parse(request.params);
+    const { user_id } = request.body as { user_id: string };
+
+    if (!user_id) {
+        throw request.server.httpErrors.badRequest('user_id is required');
+    }
+
+    const result = await service.assignProjectMember(
+        request.server,
+        workspaceId,
+        id,
+        user_id,
+        request.supabaseUser!.id
+    );
+    return reply.send(result);
+}
+
+/**
+ * DELETE /repositories/:id/members/:userId
+ * Remove a member from a project
+ */
+export async function removeProjectMemberController(
+    request: FastifyRequest<{ Params: any }>,
+    reply: FastifyReply
+) {
+    const workspaceId = request.workspace!.id;
+    const { id, userId } = request.params as { id: string; userId: string };
+
+    await service.removeProjectMember(request.server, workspaceId, id, userId);
+    return reply.send({ success: true });
 }

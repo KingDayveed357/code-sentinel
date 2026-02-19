@@ -29,11 +29,27 @@ import {
   Plus,
   X,
   RefreshCw,
+  Users,
+  UserPlus,
+  Shield,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DisconnectProjectDialog } from "@/components/dashboard/project/disconnect-project-dialog";
 import { repositoriesApi } from "@/lib/api/repositories";
+import { membersApi } from "@/lib/api/members";
 import type { Repository, RepositorySettings } from "@/lib/api/repositories";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage
+} from "@/components/ui/avatar";
 
 export default function ProjectSettingsPage({
   params,
@@ -74,6 +90,26 @@ export default function ProjectSettingsPage({
   const [registeringWebhook, setRegisteringWebhook] = useState(false);
   const [newBranch, setNewBranch] = useState("");
   const [newLabel, setNewLabel] = useState("");
+
+  // Project members state
+  const [assignedMembers, setAssignedMembers] = useState<any[]>([]);
+  const [availableWorkspaceMembers, setAvailableWorkspaceMembers] = useState<any[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [assigningMember, setAssigningMember] = useState<string | null>(null);
+  const [removingMember, setRemovingMember] = useState<string | null>(null);
+  const [memberSearchQuery, setMemberSearchQuery] = useState("");
+
+  const normalizedSearchQuery = memberSearchQuery.trim().toLowerCase();
+  const assignedUserIds = new Set(assignedMembers.map((member) => member.user_id));
+  const assignableMembers = availableWorkspaceMembers.filter((member) => {
+    if (assignedUserIds.has(member.user_id)) return false;
+
+    if (!normalizedSearchQuery) return true;
+
+    const memberName = (member.full_name || "").toLowerCase();
+    const memberEmail = (member.email || "").toLowerCase();
+    return memberName.includes(normalizedSearchQuery) || memberEmail.includes(normalizedSearchQuery);
+  });
 
   useEffect(() => {
     if (workspace?.id) {
@@ -120,6 +156,60 @@ export default function ProjectSettingsPage({
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMembers = async () => {
+    if (!workspace?.id) return;
+    
+    try {
+      setLoadingMembers(true);
+      const [assigned, allWorkspaceMembers] = await Promise.all([
+        repositoriesApi.getMembers(workspace.id, projectId),
+        membersApi.list(workspace.id)
+      ]);
+      setAssignedMembers(assigned);
+      setAvailableWorkspaceMembers(allWorkspaceMembers.members);
+    } catch (err) {
+      console.error('Error loading members:', err);
+    } finally {
+      setLoadingMembers(false);
+    }
+  };
+
+  useEffect(() => {
+    if (workspace?.id) {
+      loadMembers();
+    }
+  }, [projectId, workspace?.id]);
+
+  const handleAssignMember = async (userId: string) => {
+    if (!workspace?.id) return;
+
+    try {
+      setAssigningMember(userId);
+      await repositoriesApi.assignMember(workspace.id, projectId, userId);
+      toast.success("Member assigned successfully");
+      loadMembers(); // Refresh list
+    } catch (err: any) {
+      toast.error(err.message || "Failed to assign member");
+    } finally {
+      setAssigningMember(null);
+    }
+  };
+
+  const handleRemoveMember = async (userId: string) => {
+    if (!workspace?.id) return;
+
+    try {
+      setRemovingMember(userId);
+      await repositoriesApi.removeMember(workspace.id, projectId, userId);
+      toast.success("Member removed from project");
+      loadMembers(); // Refresh list
+    } catch (err: any) {
+      toast.error(err.message || "Failed to remove member");
+    } finally {
+      setRemovingMember(null);
     }
   };
 
@@ -354,13 +444,22 @@ export default function ProjectSettingsPage({
         <p className="text-muted-foreground mt-1">Manage settings for {project?.name}</p>
       </div>
 
-      {/* Error Message */}
       {error && project && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
+
+      <Tabs defaultValue="general" className="w-full">
+        <TabsList className="grid w-full grid-cols-4 mb-8">
+          <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="scanning">Scanning</TabsTrigger>
+          <TabsTrigger value="issues">Issues</TabsTrigger>
+          <TabsTrigger value="access">Access</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="general" className="space-y-6">
 
       {/* General Settings */}
       <Card>
@@ -462,6 +561,9 @@ export default function ProjectSettingsPage({
           </div>
         </CardContent>
       </Card>
+      </TabsContent>
+
+      <TabsContent value="scanning" className="space-y-6">
 
       {/* Webhook Status */}
       <Card>
@@ -650,6 +752,9 @@ export default function ProjectSettingsPage({
           </Button>
         </CardContent>
       </Card>
+      </TabsContent>
+
+      <TabsContent value="issues" className="space-y-6">
 
       {/* GitHub Issue Creation */}
       <Card>
@@ -752,6 +857,118 @@ export default function ProjectSettingsPage({
           </Button>
         </CardContent>
       </Card>
+      </TabsContent>
+
+      <TabsContent value="access" className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5" />
+              Project Access
+            </CardTitle>
+            <CardDescription>
+              Manage who can view and manage this project. Owners and Admins always have full access.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Assign Member Input */}
+            <div className="space-y-4">
+              <Label>Assign New Member</Label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input 
+                    placeholder="Search workspace members by name or email..." 
+                    className="pl-9"
+                    value={memberSearchQuery}
+                    onChange={(e) => setMemberSearchQuery(e.target.value)}
+                  />
+                  
+                  {memberSearchQuery && (
+                    <Card className="absolute top-full left-0 right-0 mt-1 z-10 shadow-lg max-h-[300px] overflow-y-auto">
+                      <CardContent className="p-0">
+                        {assignableMembers.map((member) => (
+                            <button
+                              key={member.user_id}
+                              className="w-full flex items-center gap-3 p-3 hover:bg-muted transition-colors text-left"
+                              onClick={() => {
+                                handleAssignMember(member.user_id);
+                                setMemberSearchQuery("");
+                              }}
+                              disabled={assigningMember === member.user_id}
+                            >
+                              <Avatar className="h-8 w-8">
+                                <AvatarImage src={member.avatar_url || ""} />
+                                <AvatarFallback>{member.full_name?.charAt(0) || member.email?.charAt(0) || "U"}</AvatarFallback>
+                              </Avatar>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate">{member.full_name || member.email}</p>
+                                <p className="text-xs text-muted-foreground truncate">{member.email}</p>
+                              </div>
+                              {assigningMember === member.user_id ? (
+                                <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
+                              ) : (
+                                <UserPlus className="h-4 w-4 text-muted-foreground" />
+                              )}
+                            </button>
+                        ))}
+                        {assignableMembers.length === 0 && (
+                          <p className="p-4 text-sm text-muted-foreground text-center">No matching members found</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <Label>Assigned Members ({assignedMembers.length})</Label>
+              <div className="border rounded-lg divide-y">
+                {loadingMembers ? (
+                   <div className="flex items-center justify-center py-8">
+                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                   </div>
+                ) : assignedMembers.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <Users className="h-10 w-10 text-muted-foreground mb-3 opacity-20" />
+                    <p className="text-sm text-muted-foreground">Only workspace admins have access to this project.</p>
+                  </div>
+                ) : (
+                  assignedMembers.map((assignment) => (
+                    <div key={assignment.id} className="flex items-center justify-between p-4">
+                      <div className="flex items-center gap-3">
+                         <Avatar className="h-10 w-10">
+                           <AvatarImage src={assignment.user?.avatar_url} />
+                           <AvatarFallback>{assignment.user?.full_name?.charAt(0) || "?"}</AvatarFallback>
+                         </Avatar>
+                         <div>
+                           <p className="font-semibold">{assignment.user?.full_name || assignment.user?.email}</p>
+                           <p className="text-sm text-muted-foreground">{assignment.user?.email}</p>
+                         </div>
+                      </div>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => handleRemoveMember(assignment.user_id)}
+                        disabled={removingMember === assignment.user_id}
+                      >
+                        {removingMember === assignment.user_id ? (
+                           <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                           "Remove"
+                        )}
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </TabsContent>
+    </Tabs>
 
       {/* Danger Zone */}
       <Card className="border-destructive">

@@ -117,19 +117,6 @@ export async function processUnifiedVulnerabilities(
   const now = new Date().toISOString();
   const stats = { created: 0, updated: 0, instances: 0, instancesSkipped: 0, titlesNormalized: 0, titleErrors: 0 };
 
-  // Initialize AI service with proper error handling
-  let titleGenerator: any = null;
-  try {
-    const { getTitleGenerator } = await import('../../../../services/ai');
-    titleGenerator = getTitleGenerator(fastify);
-    fastify.log.info({ scanId }, '✅ AI title generator initialized');
-  } catch (error: any) {
-    fastify.log.error(
-      { error: error.message, stack: error.stack, scanId },
-      '❌ CRITICAL: Failed to initialize AI title generator - will use fallback'
-    );
-  }
-
   // Always have synchronous title normalizer available
   const { normalizeTitle } = await import('../../../../scanners/utils/title-normalizer');
 
@@ -142,32 +129,14 @@ export async function processUnifiedVulnerabilities(
         let normalizedTitle = vuln.title || 'Untitled Vulnerability';
         
         try {
-          if (titleGenerator) {
-            try {
-              normalizedTitle = await titleGenerator.generateTitle({
-                rule_id: vuln.rule_id,
-                description: vuln.description || '',
-                scanner_type: vuln.type,
-                severity: vuln.severity,
-                file_path: vuln.file_path,
-                cwe: vuln.cwe?.[0] || null,
-                raw_title: vuln.title,
-              });
-              
-              if (normalizedTitle !== vuln.title) {
-                stats.titlesNormalized++;
-              }
-            } catch (aiError: any) {
-                // Fallback handled below
-              fastify.log.warn(
-                { error: aiError.message, vulnId: vuln.id, scanId },
-                '⚠️  AI title generation failed for vulnerability - using fallback'
-              );
-              stats.titleErrors++;
-              normalizedTitle = normalizeTitle(vuln.rule_id, vuln.title, vuln.type);
-            }
-          } else {
-            normalizedTitle = normalizeTitle(vuln.rule_id, vuln.title, vuln.type);
+          normalizedTitle = normalizeTitle(
+            vuln.rule_id,
+            vuln.title,
+            vuln.type,
+            vuln.description
+          );
+          if (normalizedTitle !== vuln.title) {
+            stats.titlesNormalized++;
           }
         } catch (normalizationError: any) {
           fastify.log.error(

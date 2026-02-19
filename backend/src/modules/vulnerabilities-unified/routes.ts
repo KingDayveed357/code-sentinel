@@ -9,6 +9,7 @@ import {
   requireProfile,
   requireWorkspace,
 } from "../../middleware/gatekeepers";
+import { requirePermission } from "../../middleware/rbac-guards";
 import {
   getVulnerabilitiesByWorkspace,
   getVulnerabilityDetails,
@@ -62,7 +63,10 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const { workspaceId } = request.params as { workspaceId: string };
 
-      const stats = await getVulnerabilityStats(fastify, workspaceId);
+      const stats = await getVulnerabilityStats(fastify, workspaceId, { 
+        userId: request.supabaseUser!.id, 
+        role: request.workspaceRole! 
+    });
 
       return reply.send(stats);
     }
@@ -96,7 +100,8 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
         vulnId,
         includeArray,
         page,
-        limit
+        limit,
+        { userId: request.supabaseUser!.id, role: request.workspaceRole! }
       );
 
       return reply.send(vulnerability);
@@ -106,7 +111,10 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
   // PATCH /api/workspaces/:workspaceId/vulnerabilities/:vulnId/status
   fastify.patch(
     "/:workspaceId/vulnerabilities/:vulnId/status",
-    { schema: updateVulnerabilityStatusSchema },
+    { 
+        schema: updateVulnerabilityStatusSchema, 
+        preHandler: [requirePermission('vulnerabilities:resolve')] 
+    },
     async (request, reply) => {
       const { workspaceId, vulnId } = request.params as {
         workspaceId: string;
@@ -119,7 +127,8 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
         workspaceId,
         vulnId,
         status,
-        note
+        note,
+        { userId: request.supabaseUser!.id, role: request.workspaceRole! }
       );
 
       return reply.send(updated);
@@ -129,7 +138,10 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
   // PATCH /api/workspaces/:workspaceId/vulnerabilities/:vulnId/assign
   fastify.patch(
     "/:workspaceId/vulnerabilities/:vulnId/assign",
-    { schema: assignVulnerabilitySchema },
+    { 
+        schema: assignVulnerabilitySchema,
+        preHandler: [requirePermission('vulnerabilities:assign')] 
+    },
     async (request, reply) => {
       const { workspaceId, vulnId } = request.params as {
         workspaceId: string;
@@ -141,7 +153,8 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
         fastify,
         workspaceId,
         vulnId,
-        assigned_to
+        assigned_to,
+        { userId: request.supabaseUser!.id, role: request.workspaceRole! }
       );
 
       return reply.send(updated);
@@ -173,7 +186,11 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
   // POST /api/workspaces/:workspaceId/vulnerabilities/:vulnId/create-issue
   fastify.post(
     "/:workspaceId/vulnerabilities/:vulnId/create-issue",
-    { schema: createGitHubIssueSchema },
+    { 
+        schema: createGitHubIssueSchema,
+        // Creating an issue is akin to updating/resolving a vulnerability context externally
+        preHandler: [requirePermission('vulnerabilities:update')] 
+    },
     async (request, reply) => {
       const { workspaceId, vulnId } = request.params as {
         workspaceId: string;

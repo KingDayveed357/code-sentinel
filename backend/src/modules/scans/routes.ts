@@ -6,6 +6,7 @@ import {
   requireProfile,
   requireWorkspace,
 } from "../../middleware/gatekeepers";
+import { requirePermission } from "../../middleware/rbac-guards";
 import { resolveWorkspace } from "../../middleware/workspace";
 import {
   listScansSchema,
@@ -44,7 +45,10 @@ export async function scansRoutes(fastify: FastifyInstance) {
   // POST /api/workspaces/:workspaceId/scans
   fastify.post(
     "/:workspaceId/scans",
-    { schema: startScanSchema },
+    { 
+        schema: startScanSchema,
+        preHandler: [requirePermission('scans:create')] 
+    },
     (req, reply) => startScanController(fastify, req as any, reply)
   );
 
@@ -65,14 +69,20 @@ export async function scansRoutes(fastify: FastifyInstance) {
   // POST /api/workspaces/:workspaceId/scans/:scanId/cancel
   fastify.post(
     "/:workspaceId/scans/:scanId/cancel",
-    { schema: cancelScanSchema },
+    { 
+        schema: cancelScanSchema, 
+        preHandler: [requirePermission('scans:delete')]  // Cancel = functionally similar to delete/stop
+    },
     (req, reply) => cancelScanController(fastify, req as any, reply)
   );
 
   // GET /api/workspaces/:workspaceId/scans/:scanId/export
   fastify.get(
     "/:workspaceId/scans/:scanId/export",
-    { schema: exportScanResultsSchema },
+    { 
+        schema: exportScanResultsSchema,
+        preHandler: [requirePermission('reports:export')]
+    },
     (req, reply) => exportScanResultsController(fastify, req as any, reply)
   );
 }

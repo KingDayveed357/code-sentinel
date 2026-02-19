@@ -5,6 +5,7 @@ import { EntitlementsService } from "../entitlements/service";
 import { getProfile } from "../../scanners/scan-profiles";
 import { ScanStatus } from "./types";
 import type { ScanFilters, ScanDetail, PaginatedScansResponse, ScanWithRepository } from "./types";
+import { logActivity } from "../../utils/activity-logger";
 
 export class ScansService {
   constructor(
@@ -88,6 +89,20 @@ export class ScansService {
       enabledScanners,
     });
 
+    // Audit log — fire-and-forget
+    logActivity(this.fastify, {
+      workspaceId,
+      actorId: userId,
+      action: 'scan.started',
+      resourceType: 'scan',
+      resourceId: scan.id,
+      metadata: {
+        repository: repo.full_name,
+        branch,
+        scan_type: normalizedScanType,
+      },
+    });
+
     return {
       scan_id: scan.id,
       status: ScanStatus.QUEUED,
@@ -95,8 +110,12 @@ export class ScansService {
     };
   }
 
-  async getScans(workspaceId: string, filters: ScanFilters): Promise<PaginatedScansResponse> {
-    const { data, count } = await this.repository.findAll(workspaceId, filters);
+  async getScans(
+    workspaceId: string, 
+    filters: ScanFilters,
+    userContext?: { userId: string; role: string }
+  ): Promise<PaginatedScansResponse> {
+    const { data, count } = await this.repository.findAll(workspaceId, filters, userContext);
 
     const scans: ScanWithRepository[] = data.map((scan: any) => ({
       ...scan,
@@ -118,8 +137,8 @@ export class ScansService {
     };
   }
 
-  async getScanDetails(workspaceId: string, scanId: string): Promise<ScanDetail> {
-    const scan = await this.repository.findById(scanId, workspaceId);
+  async getScanDetails(workspaceId: string, scanId: string, userContext?: { userId: string; role: string }): Promise<ScanDetail> {
+    const scan = await this.repository.findById(scanId, workspaceId, userContext);
     if (!scan) {
       throw this.fastify.httpErrors.notFound(`Scan not found. ID: ${scanId}`);
     }
@@ -204,7 +223,7 @@ export class ScansService {
     };
   }
 
-  async cancelScan(workspaceId: string, scanId: string): Promise<{ success: boolean; message: string }> {
+  async cancelScan(workspaceId: string, scanId: string, userId?: string): Promise<{ success: boolean; message: string }> {
     const scan = await this.repository.findById(scanId, workspaceId);
     if (!scan) throw this.fastify.httpErrors.notFound("Scan not found");
 
@@ -215,6 +234,16 @@ export class ScansService {
     await this.repository.updateStatus(scanId, workspaceId, ScanStatus.FAILED, {
       completed_at: new Date().toISOString(),
       error_message: 'Cancelled by user'
+    });
+
+    // Audit log — fire-and-forget
+    logActivity(this.fastify, {
+      workspaceId,
+      actorId: userId ?? null,
+      action: 'scan.cancelled',
+      resourceType: 'scan',
+      resourceId: scanId,
+      metadata: {},
     });
 
     return { success: true, message: "Scan cancelled successfully" };

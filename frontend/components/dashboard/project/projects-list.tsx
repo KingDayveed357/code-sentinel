@@ -1,12 +1,17 @@
 // components/dashboard/projects-list.tsx 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -43,15 +48,17 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { repositoriesApi } from "@/lib/api/repositories";
 import { scansApi } from "@/lib/api/scans";
 import type { Repository } from "@/lib/api/repositories";
-import type { Scan } from "@/lib/api/scans";
 import { DisconnectProjectDialog } from "@/components/dashboard/project/disconnect-project-dialog";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useWorkspaceChangeListener } from "@/hooks/use-workspace-change-listener";
+import { usePermissions } from "@/hooks/use-permissions";
 import { workspaceKeys } from "@/hooks/use-dashboard-data";
 import { ProjectCardSkeleton, ProjectsHeaderSkeleton } from "./projects-skeleton";
 import { ScanStatusBadge } from "@/components/scans/scan-status-badge";
 import { RunScanModal } from "@/components/scans/run-scan-modal";
 import { toast } from "sonner"
+import { useActiveScans } from "@/hooks/use-active-scans";
+import type { Scan } from "@/lib/api/scans";
 
 interface ProjectWithLatestScan extends Repository {
   latestScan?: Scan | null;
@@ -69,7 +76,10 @@ export function ProjectsList() {
   const [searchQuery, setSearchQuery] = useState(searchParams?.get("search") || "");
   const [providerFilter, setProviderFilter] = useState(searchParams?.get("provider") || "all");
   const [sortBy, setSortBy] = useState(searchParams?.get("sort") || "recent");
-  // When sorting by risk, force status to completed
+  const { hasPermission, isOwnerOrAdmin, isDeveloper, isViewer, canCreateScans, canUpdateProject, canDeleteProjects } = usePermissions();
+  const [viewFilter, setViewFilter] = useState<"assigned" | "all">(
+    searchParams?.get("view") as any || ((isOwnerOrAdmin || isDeveloper) ? "all" : "assigned")
+  );
   const [statusFilter, setStatusFilter] = useState(
     searchParams?.get("sort") === "risk" ? "completed" : (searchParams?.get("status") || "all")
   );
@@ -79,6 +89,10 @@ export function ProjectsList() {
   const [scanningProjects, setScanningProjects] = useState<Set<string>>(new Set());
   const [scanModalOpen, setScanModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState<ProjectWithLatestScan | null>(null);
+  const { activeScans } = useActiveScans();
+  
+  // Optimistic UI: Hidden projects (deleted but waiting for server confirmation)
+  const [hiddenProjectIds, setHiddenProjectIds] = useState<Set<string>>(new Set());
   
   const limit = 15; // Maximum 15 projects per page
 
@@ -90,7 +104,7 @@ export function ProjectsList() {
     refetch
   } = useQuery({
     queryKey: workspace 
-      ? [...workspaceKeys.projects(workspace.id), 'list', { searchQuery, providerFilter, statusFilter, sortBy, page, limit }]
+      ? [...workspaceKeys.projects(workspace.id), 'list', { searchQuery, providerFilter, statusFilter, viewFilter, sortBy, page, limit }]
       : ['projects', 'list', 'none'],
     queryFn: async () => {
       if (!workspace) throw new Error('Workspace not available');
@@ -99,10 +113,11 @@ export function ProjectsList() {
       if (searchQuery) params.search = searchQuery;
       if (providerFilter !== "all") params.provider = providerFilter;
       if (statusFilter !== "all") params.status = statusFilter;
+      if (viewFilter) params.view = viewFilter;
 
       const data = await repositoriesApi.list(workspace.id, params);
       
-      // Fetch latest scan for each project
+      // ... existing latest scan fetching logic ...
       const projectsWithScans = await Promise.all(
         data.repositories.map(async (project) => {
           try {
@@ -146,7 +161,33 @@ export function ProjectsList() {
     refetchOnMount: 'always',
   });
 
-  const projects = projectsData?.projects ?? [];
+  // Ensure persistent state is updated when a scan completes from the active tray
+  const refetchedCompletedScans = useRef<Set<string>>(new Set());
+  
+  // Reset refetched set when workspace changes to avoid staleness across workspaces produces bugs
+  useEffect(() => {
+    refetchedCompletedScans.current.clear();
+  }, [workspace?.id]);
+
+  useEffect(() => {
+    let shouldRefetch = false;
+    activeScans.forEach(scan => {
+      // If a scan is completed/failed and we haven't synced it yet, trigger a refetch
+      if ((scan.status === 'completed' || scan.status === 'failed') && !refetchedCompletedScans.current.has(scan.id)) {
+        refetchedCompletedScans.current.add(scan.id);
+        shouldRefetch = true;
+      }
+    });
+
+    if (shouldRefetch) {
+      console.log('🔄 Scan completed, refreshing project list...');
+      void refetch();
+    }
+  }, [activeScans, refetch]);
+
+  const projects = projectsData?.projects 
+    ? projectsData.projects.filter(p => !hiddenProjectIds.has(p.id)) 
+    : [];
   const totalPages = projectsData?.pages ?? 1;
   const total = projectsData?.total ?? 0;
   const loading = isLoading || isSwitching || initializing;
@@ -157,6 +198,7 @@ export function ProjectsList() {
     if (searchQuery) params.set("search", searchQuery);
     if (providerFilter !== "all") params.set("provider", providerFilter);
     if (statusFilter !== "all") params.set("status", statusFilter);
+    if (viewFilter) params.set("view", viewFilter);
     if (sortBy !== "recent") params.set("sort", sortBy);
     if (page > 1) params.set("page", String(page));
     
@@ -181,16 +223,19 @@ export function ProjectsList() {
   };
 
   const handleOpenScanModal = (project: ProjectWithLatestScan, event: React.MouseEvent) => {
-    event.stopPropagation(); // Prevent row click navigation
+    // Stop propagation to prevent row click
+    event.preventDefault();
+    event.stopPropagation();
     setSelectedProject(project);
     setScanModalOpen(true);
   };
 
   const handleScanStarted = () => {
-    // Refetch projects to update scan status
+    // The useActiveScans hook will pick this up automatically
+    // But we can also force a refetch if we want to be safe
     setTimeout(() => {
       refetch();
-    }, 2000);
+    }, 1000);
   };
 
   const handleSearchChange = (value: string) => {
@@ -205,6 +250,11 @@ export function ProjectsList() {
   };
 
   const onDisconnectSuccess = (deletedId: string) => {
+    // Project is already hidden via optimistic UI in the Dialog's onConfirm (if we wire it up)
+    // Or we hide it here immediately
+    setHiddenProjectIds(prev => new Set(prev).add(deletedId));
+    toast.success("Project disconnected");
+    
     if (workspace) {
       queryClient.invalidateQueries({
         queryKey: workspaceKeys.projects(workspace.id)
@@ -284,8 +334,26 @@ export function ProjectsList() {
       )}
 
       {/* Search and Filters */}
-     
-          <div className="flex flex-col md:flex-row gap-4">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          {(isOwnerOrAdmin || isDeveloper) && (
+            <Tabs 
+              value={viewFilter} 
+              onValueChange={(v: any) => {
+                setViewFilter(v);
+                setPage(1);
+                updateURL();
+              }}
+              className="w-full md:w-auto"
+            >
+              <TabsList className="grid grid-cols-2 w-full md:w-[300px]">
+                <TabsTrigger value="all">All Projects</TabsTrigger>
+                <TabsTrigger value="assigned">My Projects</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
+          
+          <div className="flex flex-1 items-center gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -296,29 +364,32 @@ export function ProjectsList() {
                 disabled={loading}
               />
             </div>
+          </div>
+        </div>
 
-            <Select
-              value={sortBy}
-              onValueChange={(v) => {
-                setSortBy(v);
-                // When sorting by risk, force status to completed
-                if (v === "risk") {
-                  setStatusFilter("completed");
-                }
-                setPage(1);
-                updateURL();
-              }}
-              disabled={loading}
-            >
-              <SelectTrigger className="w-full md:w-[200px]">
-                <Filter className="mr-2 h-4 w-4" />
-                <SelectValue placeholder="Sort by" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="recent">Most Recent</SelectItem>
-                <SelectItem value="risk">Highest Risk</SelectItem>
-              </SelectContent>
-            </Select>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={sortBy}
+            onValueChange={(v) => {
+              setSortBy(v);
+              // When sorting by risk, force status to completed
+              if (v === "risk") {
+                setStatusFilter("completed");
+              }
+              setPage(1);
+              updateURL();
+            }}
+            disabled={loading}
+          >
+            <SelectTrigger className="w-full md:w-[200px]">
+              <Filter className="mr-2 h-4 w-4" />
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="recent">Most Recent</SelectItem>
+              <SelectItem value="risk">Highest Risk</SelectItem>
+            </SelectContent>
+          </Select>
 
             {/* 
             Integration filter is removed for now since we only have GitHub, but can be easily re-enabled when we add more providers
@@ -364,6 +435,7 @@ export function ProjectsList() {
               </SelectContent>
             </Select>
           </div>
+      </div>
     
 
       {/* Loading State */}
@@ -424,17 +496,28 @@ export function ProjectsList() {
                   </thead>
                   <tbody>
                     {projects.map((project) => {
-                      const latestScan = project.latestScan;
-                      const riskScore = calculateRiskScore(latestScan);
+                      // ✅ REAL-TIME STATUS SYNC
+                      // Check if there's an active scan for this project
+                      const activeScan = activeScans.find(s => s.repository.id === project.id);
+                      
+                      // Use active scan if available, otherwise fall back to latest historical scan
+                      // We intentionally use 'any' cast here because ActiveScan might have slightly different
+                      // nullability than Scan, but they are compatible for our usage
+                      const displayScan = activeScan || project.latestScan;
+                      
+                      const riskScore = calculateRiskScore(displayScan as Scan | null);
                       const riskColor = getRiskScoreColor(riskScore);
-                      const isScanning = scanningProjects.has(project.id);
-                      const isActiveScan = latestScan && latestScan.status === 'processing';
-
+                      const isScanRunning = activeScan && (activeScan.status === 'queued' || activeScan.status === 'processing');
+                      
                       return (
                         <tr
                           key={project.id}
                           className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer group"
-                          onClick={() => router.push(`/dashboard/projects/${project.id}`)}
+                          onClick={(e) => {
+                             // Only navigate if we didn't click a button/interactive element
+                             if ((e.target as HTMLElement).closest('button, a, [role="menuitem"]')) return;
+                             router.push(`/dashboard/projects/${project.id}`);
+                          }}
                         >
                           <td className="py-4 px-6">
                             <div className="flex flex-col">
@@ -461,17 +544,17 @@ export function ProjectsList() {
                             </Badge>
                           </td>
                           <td className="py-4 px-6">
-                            {latestScan ? (
+                            {displayScan ? (
                               <div className="flex items-center gap-2">
                                 <ScanStatusBadge
-                                  status={latestScan.status}
-                                  progressPercentage={latestScan.progress_percentage}
-                                  progressStage={latestScan.progress_stage}
-                                  showProgress={latestScan.status === "running"}
+                                  status={displayScan.status}
+                                  progressPercentage={displayScan.progress_percentage ?? undefined}
+                                  progressStage={displayScan.progress_stage ?? undefined}
+                                  showProgress={displayScan.status === "processing" || displayScan.status === "queued"}
                                   size="sm"
                                 />
                                 <span className="text-sm text-muted-foreground">
-                                  {formatDate(latestScan.created_at)}
+                                  {formatDate(displayScan.created_at)}
                                 </span>
                               </div>
                             ) : (
@@ -481,29 +564,29 @@ export function ProjectsList() {
                             )}
                           </td>
                           <td className="py-4 px-6">
-                            {latestScan && latestScan.status === 'completed' ? (
+                            {displayScan && displayScan.status === 'completed' ? (
                               <div className="flex items-center gap-2 flex-wrap">
-                                {latestScan.critical_count > 0 && (
+                                {displayScan.critical_count > 0 && (
                                   <Badge className="bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20">
-                                    {latestScan.critical_count} 
+                                    {displayScan.critical_count} 
                                   </Badge> 
                                 )}
-                                {latestScan.high_count > 0 && (
+                                {displayScan.high_count > 0 && (
                                   <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/20 hover:bg-orange-500/20">
-                                    {latestScan.high_count}
+                                    {displayScan.high_count}
                                   </Badge>
                                 )}
-                                {latestScan.medium_count > 0 && (
+                                {displayScan.medium_count > 0 && (
                                   <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20 hover:bg-yellow-500/20">
-                                    {latestScan.medium_count}
+                                    {displayScan.medium_count}
                                   </Badge>
                                 )}
-                                {latestScan.low_count > 0 && (
+                                {displayScan.low_count > 0 && (
                                   <Badge className="bg-blue-500/10 text-blue-500 border-blue-500/20 hover:bg-blue-500/20">
-                                    {latestScan.low_count}
+                                    {displayScan.low_count}
                                   </Badge>
                                 )}
-                                {latestScan.vulnerabilities_found === 0 && (
+                                {displayScan.vulnerabilities_found === 0 && (
                                   <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">
                                     Clean
                                   </Badge>
@@ -514,64 +597,94 @@ export function ProjectsList() {
                             )}
                           </td>
                           <td className="py-4 px-6">
-                            <div className="flex items-center justify-center gap-2">
-                              <Button
-                                size="sm"
-                                variant="default"
-                                onClick={(e) => handleOpenScanModal(project, e)}
-                                disabled={!!isActiveScan}
-                                className="h-8"
-                              >
-                                {isActiveScan ? (
-                                  <>
-                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                    Scanning
-                                  </>
-                                ) : (
-                                  <>
-                                    <Play className="h-4 w-4 mr-2" />
-                                    Run Scan
-                                  </>
-                                )}
-                              </Button>
-                              
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            {!isViewer ? (
+                              <div className="flex items-center justify-center gap-2">
+                                {canCreateScans && (
                                   <Button
                                     size="sm"
-                                    variant="ghost"
-                                    className="h-8 w-8 p-0"
+                                    variant="default"
+                                    onClick={(e) => handleOpenScanModal(project, e)}
+                                    // Prevent clicking if a scan is already running to avoid duplicates, 
+                                    // but allow if it's completed/failed
+                                    disabled={!!isScanRunning}
+                                    className="h-8"
                                   >
-                                    <MoreVertical className="h-4 w-4" />
+                                    {isScanRunning ? (
+                                      <>
+                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                        Scanning
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Play className="h-4 w-4 mr-2" />
+                                        Run Scan
+                                      </>
+                                    )}
                                   </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem asChild>
+                                )}
+                                
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-8 w-8 p-0"
+                                      onClick={(e) => {
+                                        // Stop propagation at the button level to ensure 
+                                        // the row click handler doesn't fire
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }}
+                                    >
+                                      <MoreVertical className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem asChild>
+                                      <Link href={`/dashboard/projects/${project.id}`}>
+                                        View Details
+                                      </Link>
+                                    </DropdownMenuItem>
+                                    
+                                    {canUpdateProject && (
+                                      <DropdownMenuItem asChild>
+                                        <Link href={`/dashboard/projects/${project.id}/settings`}>
+                                          <Settings className="mr-2 h-4 w-4" />
+                                          Settings
+                                        </Link>
+                                      </DropdownMenuItem>
+                                    )}
+                                    
+                                    {canDeleteProjects && (
+                                      <>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                          className="text-destructive"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setProjectToDelete({ id: project.id, name: project.name });
+                                          }}
+                                        >
+                                          Disconnect
+                                        </DropdownMenuItem>
+                                      </>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            ) : (
+                               <div className="flex justify-center">
+                                  <Button variant="ghost" size="sm" asChild>
                                     <Link href={`/dashboard/projects/${project.id}`}>
-                                      View Details
+                                        View
                                     </Link>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem asChild>
-                                    <Link href={`/dashboard/projects/${project.id}/settings`}>
-                                      <Settings className="mr-2 h-4 w-4" />
-                                      Settings
-                                    </Link>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    className="text-destructive"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setProjectToDelete({ id: project.id, name: project.name });
-                                    }}
-                                  >
-                                    Disconnect
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                              
-                              <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                            </div>
+                                  </Button>
+                               </div>
+                            )}
+                            
+                            {!isViewer && (
+                              <ChevronRight className="hidden h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                            )}
                           </td>
                         </tr>
                       );
@@ -650,13 +763,13 @@ export function ProjectsList() {
         </>
       )}
 
-      {/* <DisconnectProjectDialog 
+      <DisconnectProjectDialog 
         project={projectToDelete}
-        workspaceId={workspace!.id}
+        workspaceId={workspace?.id || ""}
         open={!!projectToDelete}
         onOpenChange={(open) => !open && setProjectToDelete(null)}
         onSuccess={onDisconnectSuccess}
-      /> */}
+      />
 
       {/* Run Scan Modal */}
       {selectedProject && workspace && (

@@ -102,29 +102,39 @@ export default function VulnerabilityDetailPage() {
       return null;
     }
     const candidate = explanation as any;
-    if (
-      typeof candidate.vulnerabilityTitle !== "string" ||
-      typeof candidate.summary !== "string" ||
-      typeof candidate.impact !== "string" ||
-      typeof candidate.exploitScenario !== "string" ||
-      typeof candidate.remediationOverview !== "string" ||
-      !Array.isArray(candidate.stepByStepFix) ||
-      typeof candidate.confidence !== "number" ||
-      !Array.isArray(candidate.citations)
-    ) {
+
+    const refinedTitle =
+      typeof candidate.refined_title === "string"
+        ? candidate.refined_title
+        : typeof candidate.vulnerabilityTitle === "string"
+          ? candidate.vulnerabilityTitle
+          : null;
+    const rootCauseSummary =
+      typeof candidate.root_cause_summary === "string"
+        ? candidate.root_cause_summary
+        : typeof candidate.summary === "string"
+          ? candidate.summary
+          : typeof candidate.impact === "string"
+            ? candidate.impact
+            : null;
+    const remediationStep =
+      typeof candidate.remediation_step === "string"
+        ? candidate.remediation_step
+        : typeof candidate.remediationOverview === "string"
+          ? candidate.remediationOverview
+          : Array.isArray(candidate.stepByStepFix) &&
+              typeof candidate.stepByStepFix[0] === "string"
+            ? candidate.stepByStepFix[0]
+            : null;
+
+    if (!refinedTitle || !rootCauseSummary || !remediationStep) {
       return null;
     }
+
     return {
-      vulnerabilityTitle: candidate.vulnerabilityTitle,
-      summary: candidate.summary,
-      impact: candidate.impact,
-      exploitScenario: candidate.exploitScenario,
-      remediationOverview: candidate.remediationOverview,
-      stepByStepFix: candidate.stepByStepFix.filter(
-        (v: unknown) => typeof v === "string"
-      ),
-      confidence: candidate.confidence,
-      citations: candidate.citations.filter((v: unknown) => typeof v === "string"),
+      refined_title: refinedTitle,
+      root_cause_summary: rootCauseSummary,
+      remediation_step: remediationStep,
       generated_at: candidate.generated_at,
       provider: candidate.provider,
       model_version: candidate.model_version,
@@ -356,7 +366,7 @@ export default function VulnerabilityDetailPage() {
   }
 
   const effectiveTitle =
-    aiExplanation?.vulnerabilityTitle?.trim() || vulnerability.title;
+    aiExplanation?.refined_title?.trim() || vulnerability.title;
 
   return (
     <div className="space-y-6">
@@ -381,15 +391,15 @@ export default function VulnerabilityDetailPage() {
             {vulnerability.status.replace("_", " ").toUpperCase()}
           </Badge>
         </div>
-        {aiExplanation?.vulnerabilityTitle && (
+        {aiExplanation?.refined_title && (
           <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
             <Sparkles className="h-3.5 w-3.5" />
             AI-Generated Vulnerability Title
           </div>
         )}
         <h1 className="text-3xl font-bold tracking-tight">{effectiveTitle}</h1>
-        {aiExplanation?.vulnerabilityTitle &&
-          vulnerability.title !== aiExplanation.vulnerabilityTitle && (
+        {aiExplanation?.refined_title &&
+          vulnerability.title !== aiExplanation.refined_title && (
             <p className="mt-1 text-sm text-muted-foreground">
               Original title: {vulnerability.title}
             </p>

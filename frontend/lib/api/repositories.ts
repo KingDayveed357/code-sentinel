@@ -274,4 +274,34 @@ export const repositoriesApi = {
       requireAuth: true,
     });
   },
+
+  /**
+   * Get members assigned to a project
+   */
+  getMembers: async (workspaceId: string, projectId: string): Promise<any[]> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/${projectId}/members`, {
+      requireAuth: true,
+    });
+  },
+
+  /**
+   * Assign a member to a project
+   */
+  assignMember: async (workspaceId: string, projectId: string, userId: string): Promise<any> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/${projectId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+      requireAuth: true,
+    });
+  },
+
+  /**
+   * Remove a member from a project
+   */
+  removeMember: async (workspaceId: string, projectId: string, userId: string): Promise<{ success: boolean }> => {
+    return apiFetch(`/workspaces/${workspaceId}/repositories/${projectId}/members/${userId}`, {
+      method: "DELETE",
+      requireAuth: true,
+    });
+  },
 };

@@ -37,10 +37,21 @@ export interface VulnerabilityUnified {
 }
 
 export interface AIExplanation {
-  summary: string;
+  refined_title?: string;
+  root_cause_summary?: string;
+  remediation_step?: string;
+  vulnerabilityTitle?: string;
+  summary?: string;
+  impact?: string;
+  exploitScenario?: string;
+  remediationOverview?: string;
+  stepByStepFix?: string[];
+  confidence?: number;
+  citations?: string[];
   why_it_matters?: string;
   annotated_code?: string;
   generated_at: string;
+  provider?: string;
   model_version: string;
   tokens_used?: number;
 }

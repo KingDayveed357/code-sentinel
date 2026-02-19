@@ -11,14 +11,9 @@ import { apiFetch } from "@/lib/api";
 export type AiExplanationState = "idle" | "queued" | "processing" | "ready" | "failed";
 
 export interface VulnerabilityExplanation {
-  vulnerabilityTitle: string;
-  summary: string;
-  impact: string;
-  exploitScenario: string;
-  remediationOverview: string;
-  stepByStepFix: string[];
-  confidence: number;
-  citations: string[];
+  refined_title: string;
+  root_cause_summary: string;
+  remediation_step: string;
   generated_at?: string;
   provider?: string;
   model_version?: string;

@@ -24,6 +24,7 @@ import { usePathname } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AIAssistant } from "@/components/dashboard/ai-assistant";
 import { useAuth } from "@/hooks/use-auth";
+import { usePermissions } from "@/hooks/use-permissions";
 import { UserNav } from "@/components/dashboard/sidebar/user-nav";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 import { ScanActivityTray } from "@/components/scans/scan-activity-tray";
@@ -44,6 +45,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const { canAccessTeam, profileLoading, workspaceId } = useAuth();
+  const { hasPermission, isOwnerOrAdmin } = usePermissions();
   const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({
     running_scans: 0,
     critical_high: 0,
@@ -81,8 +83,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }, [workspaceId]);
 
   const filteredNavigation = useMemo(() => {
-    return navigation
-  }, []);
+    return navigation.filter(item => {
+      if (item.name === 'Members') return hasPermission('members:view');
+      if (item.name === 'Integrations') return hasPermission('integrations:view');
+      return true;
+    });
+  }, [hasPermission]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

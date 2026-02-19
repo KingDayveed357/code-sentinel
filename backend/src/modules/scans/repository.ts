@@ -5,7 +5,7 @@ import type { ScanFilters, ScanWithRepository, ScanDetail } from "./types";
 export class ScansRepository {
   constructor(private readonly fastify: FastifyInstance) {}
 
-  async findById(scanId: string, workspaceId: string): Promise<any | null> {
+  async findById(scanId: string, workspaceId: string, userContext?: { userId: string; role: string }): Promise<any | null> {
     const { data: scan, error } = await this.fastify.supabase
       .from("scans")
       .select(
@@ -17,14 +17,33 @@ export class ScansRepository {
       `
       )
       .eq("id", scanId)
+      .eq("id", scanId)
       .eq("workspace_id", workspaceId)
       .single();
+
+    if (userContext?.role === 'developer' && scan) {
+        // Double check assignment
+        const { data: assignment } = await this.fastify.supabase
+            .from('project_members')
+            .select('id')
+            .eq('project_id', scan.repository_id) // scan must maintain repo_id
+            .eq('user_id', userContext.userId)
+            .single();
+
+        if (!assignment) {
+            return null; // effectively not found
+        }
+    }
 
     if (error) return null;
     return scan;
   }
 
-  async findAll(workspaceId: string, filters: ScanFilters): Promise<{ data: any[]; count: number }> {
+  async findAll(
+    workspaceId: string, 
+    filters: ScanFilters,
+    userContext?: { userId: string; role: string }
+  ): Promise<{ data: any[]; count: number }> {
     const offset = (filters.page - 1) * filters.limit;
 
     let query = this.fastify.supabase
@@ -39,6 +58,23 @@ export class ScansRepository {
         { count: "exact" }
       )
       .eq("workspace_id", workspaceId);
+      
+    // ✅ RBAC Filter: Developers only see scans for assigned projects
+    if (userContext?.role === 'developer') {
+        const { data: assignments } = await this.fastify.supabase
+            .from('project_members')
+            .select('project_id')
+            .eq('user_id', userContext.userId);
+            
+        const assignedIds = (assignments || []).map(a => a.project_id);
+        
+        if (assignedIds.length === 0) {
+            // No assignments -> return empty result
+            return { data: [], count: 0 };
+        }
+        
+        query = query.in('repository_id', assignedIds);
+    }
 
     // Filters
     if (filters.status) {

@@ -18,7 +18,10 @@ export async function listScansController(
   const filters = request.query as ScanFilters;
   const services = new ScansService(new ScansRepository(fastify), fastify);
   
-  const result = await services.getScans(workspaceId, filters);
+  const userId = request.supabaseUser!.id;
+  const userRole = request.workspaceRole!;
+  
+  const result = await services.getScans(workspaceId, filters, { userId, role: userRole });
   return reply.send(result);
 }
 
@@ -65,7 +68,10 @@ export async function getScanDetailsController(
 ) {
   const { workspaceId, scanId } = request.params as { workspaceId: string; scanId: string };
   const services = new ScansService(new ScansRepository(fastify), fastify);
-  const result = await services.getScanDetails(workspaceId, scanId);
+  const userId = request.supabaseUser!.id;
+  const userRole = request.workspaceRole!;
+  
+  const result = await services.getScanDetails(workspaceId, scanId, { userId, role: userRole });
   return reply.send(result);
 }
 

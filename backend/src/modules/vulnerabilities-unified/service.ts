@@ -27,11 +27,12 @@ import type {
 export async function getVulnerabilitiesByWorkspace(
   fastify: FastifyInstance,
   workspaceId: string,
-  filters: VulnerabilityFilters & { scan_id?: string }
+  filters: VulnerabilityFilters & { scan_id?: string },
+  userContext?: { userId: string; role: string }
 ): Promise<PaginatedResponse<VulnerabilityUnified>> {
   // ✅ Support scan_id filtering: delegate to optimized scan query
   if (filters.scan_id) {
-    return getVulnerabilitiesByScan(fastify, workspaceId, filters.scan_id, filters);
+    return getVulnerabilitiesByScan(fastify, workspaceId, filters.scan_id, filters, userContext);
   }
 
   const offset = (filters.page - 1) * filters.limit;
@@ -41,6 +42,33 @@ export async function getVulnerabilitiesByWorkspace(
     .from("vulnerabilities_unified")
     .select("*", { count: "exact" })
     .eq("workspace_id", workspaceId);
+
+  // ✅ RBAC Filter: Developers only see vulnerabilities for assigned projects
+  if (userContext?.role === 'developer') {
+      const { data: assignments } = await fastify.supabase
+          .from('project_members')
+          .select('project_id')
+          .eq('user_id', userContext.userId);
+          
+      const assignedIds = (assignments || []).map(a => a.project_id);
+      
+      if (assignedIds.length === 0) {
+          // No assignments -> return empty result
+          return {
+              data: [],
+              meta: {
+                  current_page: filters.page,
+                  per_page: filters.limit,
+                  total: 0,
+                  total_pages: 0,
+                  has_next: false,
+                  has_prev: false,
+              },
+          };
+      }
+      
+      query = query.in('repository_id', assignedIds);
+  }
 
   // Apply filters
   if (filters.severity && Array.isArray(filters.severity)) {
@@ -145,7 +173,8 @@ export async function getVulnerabilityDetails(
   vulnerabilityId: string,
   includes: string[] = [],
   instancesPage: number = 1,
-  instancesLimit: number = 20
+  instancesLimit: number = 20,
+  userContext?: { userId: string; role: string }
 ): Promise<VulnerabilityWithInstances> {
   const { data: vulnerability, error } = await fastify.supabase
     .from("vulnerabilities_unified")
@@ -156,6 +185,20 @@ export async function getVulnerabilityDetails(
 
   if (error || !vulnerability) {
     throw fastify.httpErrors.notFound(`Vulnerability not found. ID: ${vulnerabilityId}`);
+  }
+
+  // ✅ RBAC Check
+  if (userContext?.role === 'developer') {
+    const { data: assignment } = await fastify.supabase
+      .from('project_members')
+      .select('id')
+      .eq('project_id', vulnerability.repository_id)
+      .eq('user_id', userContext.userId)
+      .single();
+    
+    if (!assignment) {
+      throw fastify.httpErrors.notFound(`Vulnerability not found. ID: ${vulnerabilityId}`);
+    }
   }
 
   const result: VulnerabilityWithInstances = vulnerability;
@@ -216,7 +259,8 @@ export async function updateVulnerabilityStatus(
   workspaceId: string,
   vulnerabilityId: string,
   status: string,
-  note?: string
+  note?: string,
+  userContext?: { userId: string; role: string }
 ): Promise<VulnerabilityUnified> {
   const updates: any = {
     status,
@@ -234,14 +278,28 @@ export async function updateVulnerabilityStatus(
 
   const { data, error } = await fastify.supabase
     .from("vulnerabilities_unified")
-    .update(updates)
+    .update(updates) // RESTORED
     .eq("id", vulnerabilityId)
     .eq("workspace_id", workspaceId)
     .select()
     .single();
 
   if (error || !data) {
-    throw fastify.httpErrors.notFound("Vulnerability not found");
+     throw fastify.httpErrors.notFound("Vulnerability not found");
+  }
+
+  // ✅ RBAC Check
+  if (userContext?.role === 'developer') {
+    const { data: assignment } = await fastify.supabase
+      .from('project_members')
+      .select('id')
+      .eq('project_id', data.repository_id)
+      .eq('user_id', userContext.userId)
+      .single();
+    
+    if (!assignment) {
+      throw fastify.httpErrors.notFound("Vulnerability not found");
+    }
   }
 
   return data;
@@ -254,7 +312,8 @@ export async function assignVulnerability(
   fastify: FastifyInstance,
   workspaceId: string,
   vulnerabilityId: string,
-  assignedTo: string | null
+  assignedTo: string | null,
+  userContext?: { userId: string; role: string }
 ): Promise<VulnerabilityUnified> {
   const { data, error } = await fastify.supabase
     .from("vulnerabilities_unified")
@@ -266,6 +325,20 @@ export async function assignVulnerability(
     .eq("workspace_id", workspaceId)
     .select()
     .single();
+
+  // ✅ RBAC Check
+  if (userContext?.role === 'developer' && data) {
+    const { data: assignment } = await fastify.supabase
+      .from('project_members')
+      .select('id')
+      .eq('project_id', data.repository_id)
+      .eq('user_id', userContext.userId)
+      .single();
+    
+    if (!assignment) {
+      throw fastify.httpErrors.notFound("Vulnerability not found");
+    }
+  }
 
   if (error || !data) {
     throw fastify.httpErrors.notFound("Vulnerability not found");
@@ -299,34 +372,38 @@ export async function generateAIExplanation(
   }
 
   try {
-    const { VulnerabilityExplainerService } = await import("../../services/ai/vulnerability-explainer");
-    const explainer = new VulnerabilityExplainerService(fastify);
+    const { randomUUID } = await import("crypto");
+    const { getAiGateway } = await import("../ai/application");
+    const { AiTaskType } = await import("../ai/domain");
+    const gateway = getAiGateway(fastify);
 
-    const aiExplanation = await explainer.explainVulnerability({
-      title: vulnerability.title,
-      description: vulnerability.description,
-      severity: vulnerability.severity,
-      scanner_type: vulnerability.scanner_type,
-      file_path: vulnerability.file_path,
-      line_start: vulnerability.line_start,
-      cwe: vulnerability.cwe,
-      rule_id: vulnerability.rule_id,
-      code_snippet: vulnerability.code_snippet,
-      scanner_metadata: vulnerability.scanner_metadata,
-    });
+    const lifecycle = await gateway.runTask({
+      id: randomUUID(),
+      workspaceId,
+      vulnerabilityId,
+      type: AiTaskType.VulnerabilityExplanation,
+      promptVersion: "v1",
+      regenerate,
+      createdAt: new Date().toISOString(),
+      input: {
+        vulnerability,
+      },
+    } as any);
 
-    const { data: updated } = await fastify.supabase
+    if (lifecycle.status === "failed") {
+      throw new Error(
+        lifecycle.error?.message || "AI explanation generation failed"
+      );
+    }
+
+    const { data: refreshed } = await fastify.supabase
       .from("vulnerabilities_unified")
-      .update({
-        ai_explanation: aiExplanation,
-        updated_at: new Date().toISOString(),
-      })
+      .select("*")
       .eq("id", vulnerabilityId)
       .eq("workspace_id", workspaceId)
-      .select()
       .single();
 
-    return updated || vulnerability;
+    return refreshed || vulnerability;
   } catch (aiError: any) {
     fastify.log.error({ error: aiError }, "AI explanation generation failed");
     return vulnerability; // Return original on failure
@@ -408,7 +485,8 @@ export async function createGitHubIssueForUnified(
  */
 export async function getVulnerabilityStats(
   fastify: FastifyInstance,
-  workspaceId: string
+  workspaceId: string,
+  userContext?: { userId: string; role: string }
 ): Promise<VulnerabilityStats> {
   const stats: VulnerabilityStats = {
     total: 0,
@@ -420,21 +498,48 @@ export async function getVulnerabilityStats(
     verified_findings: { likely_exploitable_percent: 0, likely_false_positive_percent: 0 },
   };
 
+  let assignedIds: string[] | null = null;
+  if (userContext?.role === 'developer') {
+      const { data: assignments } = await fastify.supabase
+          .from('project_members')
+          .select('project_id')
+          .eq('user_id', userContext.userId);
+      assignedIds = (assignments || []).map(a => a.project_id);
+      
+      if (assignedIds.length === 0) {
+          return stats; // Return zeros
+      }
+  }
+
+  const applyRbac = (query: any) => {
+      if (assignedIds) {
+          query.in('repository_id', assignedIds);
+      }
+      return query;
+  };
+
   // 1. Total (fastest)
-  const { count: total } = await fastify.supabase
+  let q1 = fastify.supabase
     .from("vulnerabilities_unified")
     .select("id", { count: "exact", head: true })
     .eq("workspace_id", workspaceId);
+    
+  applyRbac(q1);
+  const { count: total } = await q1;
   stats.total = total || 0;
 
   // 2. Breakdown by Severity (Only Open)
   await Promise.all(['critical', 'high', 'medium', 'low', 'info'].map(async (sev) => {
-    const { count } = await fastify.supabase
+    let q = fastify.supabase
       .from("vulnerabilities_unified")
       .select("id", { count: "exact", head: true })
       .eq("workspace_id", workspaceId)
       .eq("status", "open")
       .eq("severity", sev);
+      
+    applyRbac(q);
+    const { count } = await q;
+
     if (sev in stats.by_severity) {
       stats.by_severity[sev as keyof typeof stats.by_severity] = count || 0;
     }
@@ -442,11 +547,15 @@ export async function getVulnerabilityStats(
 
   // 3. Breakdown by Status
   await Promise.all(Object.keys(stats.by_status).map(async (status) => {
-    const { count } = await fastify.supabase
+    let q = fastify.supabase
       .from("vulnerabilities_unified")
       .select("id", { count: "exact", head: true })
       .eq("workspace_id", workspaceId)
       .eq("status", status);
+      
+    applyRbac(q);
+    const { count } = await q;
+
     if (status in stats.by_status) {
       stats.by_status[status as keyof typeof stats.by_status] = count || 0;
     }
@@ -454,12 +563,16 @@ export async function getVulnerabilityStats(
 
   // 4. Breakdown by Scanner Type (Only Open)
   await Promise.all(Object.keys(stats.by_scanner_type).map(async (type) => {
-    const { count } = await fastify.supabase
+    let q = fastify.supabase
       .from("vulnerabilities_unified")
       .select("id", { count: "exact", head: true })
       .eq("workspace_id", workspaceId)
       .eq("status", "open")
       .eq("scanner_type", type);
+    
+    applyRbac(q);
+    const { count } = await q;
+
     if (type in stats.by_scanner_type) {
       stats.by_scanner_type[type as keyof typeof stats.by_scanner_type] = count || 0;
     }
@@ -478,7 +591,8 @@ export async function getVulnerabilitiesByScan(
   fastify: FastifyInstance,
   workspaceId: string,
   scanId: string,
-  filters: Partial<VulnerabilityFilters>
+  filters: Partial<VulnerabilityFilters>,
+  userContext?: { userId: string; role: string }
 ): Promise<PaginatedResponse<VulnerabilityUnified>> {
   const page = filters.page || 1;
   const limit = filters.limit || 15;
@@ -490,6 +604,33 @@ export async function getVulnerabilitiesByScan(
     .from("vulnerabilities_unified")
     .select("*, vulnerability_instances!inner(scan_id)", { count: "exact" })
     .eq("vulnerability_instances.scan_id", scanId);
+
+  // ✅ RBAC Filter: Developers only see vulnerabilities for assigned projects (via scan's repository)
+  if (userContext?.role === 'developer') {
+      const { data: assignments } = await fastify.supabase
+          .from('project_members')
+          .select('project_id')
+          .eq('user_id', userContext.userId);
+          
+      const assignedIds = (assignments || []).map(a => a.project_id);
+      
+      if (assignedIds.length === 0) {
+          // No assignments -> return empty result
+          return {
+              data: [],
+              meta: {
+                  current_page: filters.page || 1,
+                  per_page: filters.limit || 15,
+                  total: 0,
+                  total_pages: 0,
+                  has_next: false,
+                  has_prev: false,
+              },
+          };
+      }
+      
+      query = query.in('repository_id', assignedIds);
+  }
 
   // Apply other filters (on unified table)
   if (filters.severity && Array.isArray(filters.severity)) {

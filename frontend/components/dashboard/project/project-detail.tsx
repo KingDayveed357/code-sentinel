@@ -36,6 +36,9 @@ import type { Scan } from "@/lib/api/scans";
 import type { Vulnerability } from "@/lib/api/vulnerabilities";
 import { RunScanModal } from "@/components/scans/run-scan-modal";
 import { toast } from "sonner";
+import { usePermissions } from "@/hooks/use-permissions";
+import { ProjectAccessModal } from "./project-access-modal";
+import { Users } from "lucide-react";
 
 
 
@@ -43,7 +46,10 @@ import { toast } from "sonner";
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { workspace } = useWorkspace();
+  const { canCreateScans, hasPermission, canAssignProjects } = usePermissions();
   const queryClient = useQueryClient();
+  
+  const canUpdateProject = hasPermission('projects:update');
 
   // React Query for fetching project details
   const { 
@@ -106,6 +112,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const vulnsError = (vulnsErrorObj as Error)?.message || null;
 
   const [scanModalOpen, setScanModalOpen] = useState(false);
+  const [accessModalOpen, setAccessModalOpen] = useState(false);
 
   const handleRunScan = () => {
     setScanModalOpen(true);
@@ -256,28 +263,40 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" asChild>
-            <Link href={`/dashboard/projects/${projectId}/settings`}>
-              <Settings className="mr-2 h-4 w-4" />
-             Settings
-            </Link>
-          </Button>
-          <Button 
-            onClick={handleRunScan}
-            disabled={latestScan?.status === 'processing' || latestScan?.status === 'queued'}
-          >
-            {(latestScan?.status === 'processing' || latestScan?.status === 'queued') ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Scanning...
-              </>
-            ) : (
-              <>
-                <Zap className="mr-2 h-4 w-4" />
-                Run Scan
-              </>
-            )}
-          </Button>
+          {canUpdateProject && (
+            <Button variant="outline" asChild>
+              <Link href={`/dashboard/projects/${projectId}/settings`}>
+                <Settings className="mr-2 h-4 w-4" />
+              Settings
+              </Link>
+            </Button>
+          )}
+
+          {canAssignProjects && (
+            <Button variant="outline" onClick={() => setAccessModalOpen(true)}>
+              <Users className="mr-2 h-4 w-4" />
+              Manage Access
+            </Button>
+          )}
+          
+          {canCreateScans && (
+            <Button 
+              onClick={handleRunScan}
+              disabled={latestScan?.status === 'processing' || latestScan?.status === 'queued'}
+            >
+              {(latestScan?.status === 'processing' || latestScan?.status === 'queued') ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Scanning...
+                </>
+              ) : (
+                <>
+                  <Zap className="mr-2 h-4 w-4" />
+                  Run Scan
+                </>
+              )}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -427,12 +446,15 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             <div className="text-center py-8">
               <Activity className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
               <p className="text-sm text-muted-foreground mb-4">No scans yet</p>
-              <Button 
-                onClick={handleRunScan}
-              >
-                <Zap className="mr-2 h-4 w-4" />
-                Run First Scan
-              </Button>
+              <p className="text-sm text-muted-foreground mb-4">No scans yet</p>
+              {canCreateScans && (
+                <Button 
+                  onClick={handleRunScan}
+                >
+                  <Zap className="mr-2 h-4 w-4" />
+                  Run First Scan
+                </Button>
+              )}
             </div>
           ) : (
             <div className="space-y-2">
@@ -532,13 +554,16 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               <Shield className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
               <p className="text-sm font-medium text-foreground mb-1">Run a scan to view vulnerabilities</p>
               <p className="text-xs text-muted-foreground mb-4">Start your first security scan to see results here</p>
-              <Button 
-                onClick={handleRunScan}
-                size="sm"
-              >
-                <Zap className="mr-2 h-4 w-4" />
-                Run Scan
-              </Button>
+              <p className="text-xs text-muted-foreground mb-4">Start your first security scan to see results here</p>
+              {canCreateScans && (
+                <Button 
+                  onClick={handleRunScan}
+                  size="sm"
+                >
+                  <Zap className="mr-2 h-4 w-4" />
+                  Run Scan
+                </Button>
+              )}
             </div>
           )}
 
@@ -557,14 +582,17 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               <XCircle className="h-12 w-12 text-red-500 mx-auto mb-3" />
               <p className="text-sm font-medium text-foreground mb-1">Scan failed</p>
               <p className="text-xs text-muted-foreground mb-4">The scan encountered an error. Please try again.</p>
-              <Button 
-                onClick={handleRunScan}
-                size="sm"
-                variant="outline"
-              >
-                <Zap className="mr-2 h-4 w-4" />
-                Retry Scan
-              </Button>
+              <p className="text-xs text-muted-foreground mb-4">The scan encountered an error. Please try again.</p>
+              {canCreateScans && (
+                <Button 
+                  onClick={handleRunScan}
+                  size="sm"
+                  variant="outline"
+                >
+                  <Zap className="mr-2 h-4 w-4" />
+                  Retry Scan
+                </Button>
+              )}
             </div>
           )}
 
@@ -648,17 +676,27 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
       {/* Run Scan Modal */}
       {project && workspace && (
-        <RunScanModal
-          open={scanModalOpen}
-          onOpenChange={setScanModalOpen}
-          repositoryId={project.id}
-          repositoryName={project.name}
-          defaultBranch={project.default_branch}
-          workspaceId={workspace.id}
-          workspacePlan={(workspace.plan?.toLowerCase() ?? "free") as "free" | "dev" | "team" | "enterprise"}
-          isScanning={latestScan?.status === 'processing' || latestScan?.status === 'queued'}
-          onScanStarted={handleScanStarted}
-        />
+        <>
+          <RunScanModal
+            open={scanModalOpen}
+            onOpenChange={setScanModalOpen}
+            repositoryId={project.id}
+            repositoryName={project.name}
+            defaultBranch={project.default_branch}
+            workspaceId={workspace.id}
+            workspacePlan={(workspace.plan?.toLowerCase() ?? "free") as "free" | "dev" | "team" | "enterprise"}
+            isScanning={latestScan?.status === 'processing' || latestScan?.status === 'queued'}
+            onScanStarted={handleScanStarted}
+          />
+          
+          <ProjectAccessModal
+            open={accessModalOpen}
+            onOpenChange={setAccessModalOpen}
+            workspaceId={workspace.id}
+            projectId={project.id}
+            projectName={project.name}
+          />
+        </>
       )}
     </div>
   );

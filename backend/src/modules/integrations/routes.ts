@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import * as controller from "./controller";
 import * as githubAppController from "./github-app/controller";
 import { verifyAuth, loadProfile } from "../../middleware/auth";
-import { requireAuth, requireProfile, requireWorkspace } from "../../middleware/gatekeepers";
+import { requireAuth, requireProfile, requireWorkspace, requireWorkspaceRole } from "../../middleware/gatekeepers";
 import { resolveWorkspace } from "../../middleware/workspace";
 
 /**
@@ -55,14 +55,24 @@ export async function integrationsWorkspaceRoutes(fastify: FastifyInstance) {
     // POST /api/workspaces/:workspaceId/integrations/github/connect
     fastify.post<{ Body: { provider_token?: string } }>(
         "/:workspaceId/integrations/github/connect",
-        { preHandler },
+        { 
+            preHandler: [
+                ...preHandler, 
+                requireWorkspaceRole(['owner', 'admin'])
+            ] 
+        },
         async (req, reply) => controller.connectGitHubController(fastify, req as any, reply)
     );
 
     // POST /api/workspaces/:workspaceId/integrations/:provider/disconnect
     fastify.post<{ Params: { workspaceId: string, provider: string } }>(
         "/:workspaceId/integrations/:provider/disconnect",
-        { preHandler },
+        { 
+            preHandler: [
+                ...preHandler, 
+                requireWorkspaceRole(['owner', 'admin'])
+            ] 
+        },
         async (req, reply) => controller.disconnectIntegrationController(fastify, req as any, reply)
     );
 }

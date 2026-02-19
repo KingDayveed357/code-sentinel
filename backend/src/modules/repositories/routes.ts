@@ -2,8 +2,10 @@
 import type { FastifyInstance } from "fastify";
 import * as controller from "./controller";
 import { verifyAuth, loadProfile } from "../../middleware/auth";
+// import { resolveWorkspace } from "../../middleware/workspace";
 import { resolveWorkspace } from "../../middleware/workspace";
 import { requireAuth, requireProfile, requireOnboardingCompleted, requireWorkspace } from "../../middleware/gatekeepers";
+import { requirePermission, requireAnyRole } from "../../middleware/rbac-guards";
 
 export default async function repositoriesWorkspaceRoutes(fastify: FastifyInstance) {
     // Apply workspace middleware stack to all routes in this context
@@ -43,7 +45,9 @@ export default async function repositoriesWorkspaceRoutes(fastify: FastifyInstan
      * POST /:workspaceId/repositories/import
      * Import selected repositories
      */
-    fastify.post("/:workspaceId/repositories/import", async (req, reply) =>
+    fastify.post("/:workspaceId/repositories/import", {
+        preHandler: [requirePermission('projects:create')]
+    }, async (req, reply) =>
         controller.importRepositoriesController(req, reply)
     );
 
@@ -51,7 +55,9 @@ export default async function repositoriesWorkspaceRoutes(fastify: FastifyInstan
      * POST /:workspaceId/repositories/sync
      * Re-sync repositories from GitHub
      */
-    fastify.post("/:workspaceId/repositories/sync", async (req, reply) =>
+    fastify.post("/:workspaceId/repositories/sync", {
+        preHandler: [requirePermission('projects:update')]
+    }, async (req, reply) =>
         controller.syncRepositoriesController(req, reply)
     );
 
@@ -67,7 +73,9 @@ export default async function repositoriesWorkspaceRoutes(fastify: FastifyInstan
      * PATCH /:workspaceId/repositories/:id
      * Update repository settings
      */
-    fastify.patch("/:workspaceId/repositories/:id", async (req, reply) =>
+    fastify.patch("/:workspaceId/repositories/:id", {
+        preHandler: [requirePermission('projects:update')]
+    }, async (req, reply) =>
         controller.updateRepositoryController(req, reply)
     );
 
@@ -75,7 +83,9 @@ export default async function repositoriesWorkspaceRoutes(fastify: FastifyInstan
      * DELETE /:workspaceId/repositories/:id
      * Delete/disconnect repository
      */
-    fastify.delete("/:workspaceId/repositories/:id", async (req, reply) =>
+    fastify.delete("/:workspaceId/repositories/:id", {
+        preHandler: [requirePermission('projects:delete')]
+    }, async (req, reply) =>
         controller.deleteRepositoryController(req, reply)
     );
 
@@ -93,17 +103,51 @@ export default async function repositoriesWorkspaceRoutes(fastify: FastifyInstan
      * PATCH /:workspaceId/repositories/:id/settings
      * Update repository auto-scan settings
      */
-    fastify.patch("/:workspaceId/repositories/:id/settings", controller.updateRepositorySettingsController);
+    fastify.patch("/:workspaceId/repositories/:id/settings", {
+        preHandler: [requirePermission('projects:update')]
+    }, controller.updateRepositorySettingsController);
 
     /**
      * POST /:workspaceId/repositories/:id/webhook/register
      * Register GitHub webhook for repository
      */
-    fastify.post("/:workspaceId/repositories/:id/webhook/register", controller.registerWebhookController);
+    fastify.post("/:workspaceId/repositories/:id/webhook/register", {
+        preHandler: [requirePermission('projects:update')]
+    }, controller.registerWebhookController);
 
     /**
      * DELETE /:workspaceId/repositories/:id/webhook
      * Delete GitHub webhook for repository
      */
-    fastify.delete("/:workspaceId/repositories/:id/webhook", controller.deleteWebhookController);
+    fastify.delete("/:workspaceId/repositories/:id/webhook", {
+        preHandler: [requirePermission('projects:update')]
+    }, controller.deleteWebhookController);
+
+    // ==========================================
+    // NEW: Project Member Management Routes
+    // ==========================================
+
+    /**
+     * GET /:workspaceId/repositories/:id/members
+     * List members assigned to a project
+     */
+    fastify.get("/:workspaceId/repositories/:id/members", {
+        preHandler: [requirePermission('projects:view')]
+    }, controller.getProjectMembersController);
+
+    /**
+     * POST /:workspaceId/repositories/:id/members
+     * Assign a workspace member to a project
+     */
+    fastify.post("/:workspaceId/repositories/:id/members", {
+        preHandler: [requirePermission('projects:assign')]
+    }, controller.assignProjectMemberController);
+
+    /**
+     * DELETE /:workspaceId/repositories/:id/members/:userId
+     * Remove a member from a project
+     */
+    fastify.delete("/:workspaceId/repositories/:id/members/:userId", {
+        preHandler: [requirePermission('projects:assign')]
+    }, controller.removeProjectMemberController);
 }

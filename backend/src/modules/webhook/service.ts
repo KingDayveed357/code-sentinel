@@ -13,9 +13,30 @@ import type {
   ScanTriggerResult,
   WebhookRegistrationResult,
 } from './types';
-import { getWorkspaceIntegration } from '../integrations/service';
+import { IntegrationsRepository } from '../integrations/repository';
+import { GitHubService } from '../integrations/github/service';
 
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || 'https://collapsable-excurrent-gloria.ngrok-free.dev/api/webhooks/github';
+
+async function getGitHubAccessToken(
+  fastify: FastifyInstance,
+  workspaceId: string
+): Promise<{ token: string | null; error?: string }> {
+  const integrationsRepo = new IntegrationsRepository(fastify);
+  const githubService = new GitHubService(integrationsRepo, fastify);
+
+  try {
+    const token = await githubService.getToken(workspaceId);
+    return { token };
+  } catch (error: any) {
+    const message = error?.message || 'GitHub integration not found or token missing';
+    fastify.log.warn(
+      { workspaceId, error: message },
+      'Unable to resolve GitHub access token for workspace'
+    );
+    return { token: null, error: message };
+  }
+}
 
 /**
  * Verify GitHub webhook signature
@@ -65,14 +86,12 @@ export async function verifyWebhookOnGitHub(
   githubWebhookId: number
 ): Promise<{ exists: boolean; active: boolean; error?: string }> {
   try {
-    // Get workspace's GitHub integration
-    const integration = await getWorkspaceIntegration(fastify, workspaceId, 'github');
-
-    if (!integration || !integration.oauth_access_token) {
+    const { token: githubToken, error: tokenError } = await getGitHubAccessToken(fastify, workspaceId);
+    if (!githubToken) {
       return {
         exists: false,
         active: false,
-        error: 'GitHub integration not found',
+        error: tokenError || 'GitHub integration not found or token missing',
       };
     }
 
@@ -84,7 +103,7 @@ export async function verifyWebhookOnGitHub(
       {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${integration.oauth_access_token}`,
+          Authorization: `Bearer ${githubToken}`,
           Accept: 'application/vnd.github.v3+json',
         },
       }
@@ -187,6 +206,14 @@ export async function getWebhookStatus(
       webhook.github_webhook_id
     );
 
+    if (verification.error) {
+      fastify.log.warn(
+        { repositoryId, verificationError: verification.error },
+        'Skipping webhook cleanup due to GitHub verification error'
+      );
+      return webhook.status as 'active' | 'inactive' | 'failed';
+    }
+
     // If webhook doesn't exist on GitHub, clean it up from database
     if (!verification.exists) {
       fastify.log.info(
@@ -232,13 +259,11 @@ export async function registerGitHubWebhook(
   repoFullName: string
 ): Promise<WebhookRegistrationResult> {
   try {
-    // Get workspace's GitHub integration
-    const integration = await getWorkspaceIntegration(fastify, workspaceId, 'github');
-
-    if (!integration || !integration.oauth_access_token) {
+    const { token: githubToken, error: tokenError } = await getGitHubAccessToken(fastify, workspaceId);
+    if (!githubToken) {
       return {
         success: false,
-        error: 'GitHub integration not found or token missing',
+        error: tokenError || 'GitHub integration not found or token missing',
       };
     }
 
@@ -305,7 +330,7 @@ export async function registerGitHubWebhook(
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${integration.oauth_access_token}`,
+          Authorization: `Bearer ${githubToken}`,
           Accept: 'application/vnd.github.v3+json',
           'Content-Type': 'application/json',
         },
@@ -410,10 +435,8 @@ export async function deleteGitHubWebhook(
       return { success: true }; // Already deleted
     }
 
-    // Get workspace's GitHub integration
-    const integration = await getWorkspaceIntegration(fastify, workspaceId, 'github');
-
-    if (integration?.oauth_access_token) {
+    const { token: githubToken } = await getGitHubAccessToken(fastify, workspaceId);
+    if (githubToken) {
       // Try to delete from GitHub
       const [owner, repo] = repoFullName.split('/');
 
@@ -423,7 +446,7 @@ export async function deleteGitHubWebhook(
           {
             method: 'DELETE',
             headers: {
-              Authorization: `Bearer ${integration.oauth_access_token}`,
+              Authorization: `Bearer ${githubToken}`,
               Accept: 'application/vnd.github.v3+json',
             },
           }

@@ -57,7 +57,7 @@ interface AiResultRow {
   prompt_version: string;
   provider: string | null;
   model: string | null;
-  payload: VulnerabilityExplanationPayload;
+  payload: unknown;
   prompt_tokens: number | null;
   completion_tokens: number | null;
   latency_ms: number | null;
@@ -196,7 +196,7 @@ export class AiGateway {
         );
         await this.cache.set(
           titleCacheKey,
-          existingFromVulnerability.data.vulnerabilityTitle,
+          existingFromVulnerability.data.refined_title,
           this.policyEngine.getQueuePolicy().cacheTtlSeconds
         );
         return this.buildResult({
@@ -213,18 +213,23 @@ export class AiGateway {
     }
 
     if (!task.regenerate) {
-      const cached = await this.cache.get<VulnerabilityExplanationPayload>(cacheKey);
+      const cached = await this.cache.get<unknown>(cacheKey);
       if (cached) {
-        return this.buildResult({
-          id: taskId,
-          taskId,
-          workspaceId: task.workspaceId,
-          status: "persisted",
-          payload: cached,
-          provider: "cache",
-          model: "cache",
-          cacheHit: true,
-        });
+        const parsedCached = vulnerabilityExplanationSchema.safeParse(cached);
+        if (!parsedCached.success) {
+          await this.cache.delete(cacheKey);
+        } else {
+          return this.buildResult({
+            id: taskId,
+            taskId,
+            workspaceId: task.workspaceId,
+            status: "persisted",
+            payload: parsedCached.data,
+            provider: "cache",
+            model: "cache",
+            cacheHit: true,
+          });
+        }
       }
     }
 
@@ -235,19 +240,39 @@ export class AiGateway {
         task.promptVersion
       );
       if (persisted) {
-        await this.cache.set(
-          cacheKey,
-          persisted.payload,
-          this.policyEngine.getQueuePolicy().cacheTtlSeconds
+        const parsedPersistedPayload = vulnerabilityExplanationSchema.safeParse(
+          persisted.payload
         );
-        await this.cache.set(
-          titleCacheKey,
-          persisted.payload.vulnerabilityTitle,
-          this.policyEngine.getQueuePolicy().cacheTtlSeconds
-        );
-        return this.resultFromRow(persisted);
+        if (!parsedPersistedPayload.success) {
+          this.fastify.log.warn(
+            {
+              workspaceId: task.workspaceId,
+              vulnerabilityId: vulnerability.id,
+              promptVersion: task.promptVersion,
+            },
+            "Persisted AI result failed schema validation, regenerating"
+          );
+        } else {
+          const normalizedRow: AiResultRow = {
+            ...persisted,
+            payload: parsedPersistedPayload.data,
+          };
+          await this.cache.set(
+            cacheKey,
+            parsedPersistedPayload.data,
+            this.policyEngine.getQueuePolicy().cacheTtlSeconds
+          );
+          await this.cache.set(
+            titleCacheKey,
+            parsedPersistedPayload.data.refined_title,
+            this.policyEngine.getQueuePolicy().cacheTtlSeconds
+          );
+          return this.resultFromRow(normalizedRow);
+        }
       }
+    }
 
+    if (!task.regenerate) {
       const activeTask = await this.getActiveTask(
         task.workspaceId,
         vulnerability.id,
@@ -340,7 +365,7 @@ export class AiGateway {
       );
       await this.cache.set(
         titleCacheKey,
-        execution.payload.vulnerabilityTitle,
+        execution.payload.refined_title,
         this.policyEngine.getQueuePolicy().cacheTtlSeconds
       );
 
@@ -385,8 +410,8 @@ export class AiGateway {
           vulnerabilityId: vulnerability.id,
           provider: execution.provider,
           fallbackUsed: execution.fallbackUsed,
-          aiTitle: execution.payload.vulnerabilityTitle,
-          remediationSteps: execution.payload.stepByStepFix.length,
+          aiTitle: execution.payload.refined_title,
+          remediationStep: execution.payload.remediation_step,
           resultId: persistedResult.id,
         },
         "AI vulnerability explanation persisted"
@@ -568,7 +593,7 @@ export class AiGateway {
     const vulnerabilityUpdate = await this.fastify.supabase
       .from("vulnerabilities_unified")
       .update({
-        title: execution.payload.vulnerabilityTitle,
+        title: execution.payload.refined_title,
         ai_explanation: explanationForVulnerability,
         updated_at: now,
       })
@@ -638,12 +663,17 @@ export class AiGateway {
   }
 
   private resultFromRow(row: AiResultRow): AiResult<VulnerabilityExplanationPayload> {
+    const parsedPayload = vulnerabilityExplanationSchema.safeParse(row.payload);
+    if (!parsedPayload.success) {
+      throw new Error("Persisted AI result payload failed schema validation");
+    }
+
     return this.buildResult({
       id: row.id,
       taskId: row.task_id,
       workspaceId: row.workspace_id,
       status: "persisted",
-      payload: row.payload,
+      payload: parsedPayload.data,
       provider: row.provider || undefined,
       model: row.model || undefined,
       fallbackUsed: row.fallback_used,

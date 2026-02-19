@@ -104,21 +104,21 @@ We will execute this transformation in 4 focused waves to ensure stability.
 ### Wave 2: Team Management UI & Workflows
 **Goal:** Allow Owners to build their team and assign responsibilities.
 *   **Frontend**:
-    *   [ ] **Project Settings > Members**: UI to assign specific members to a project.
-    *   [ ] **Team Settings**: Enhanced member list with Role dropdown (Owner/Admin/Dev/Viewer).
-    *   [ ] **Invite Flow**: specific role selection during invite.
+    *   [x] **Project Settings > Members**: UI to assign specific members to a project.
+    *   [x] **Team Settings**: Enhanced member list with Role dropdown (Owner/Admin/Dev/Viewer).
+    *   [x] **Invite Flow**: specific role selection during invite.
 *   **Backend**:
-    *   [ ] API endpoints for `POST /projects/:id/members` (Assign/Unassign).
-    *   [ ] Validation logic ensures you can't assign a user to a project if they aren't in the workspace.
+    *   [x] API endpoints for `POST /projects/:id/members` (Assign/Unassign).
+    *   [x] Validation logic ensures you can't assign a user to a project if they aren't in the workspace.
 
 ### Wave 3: Integration & Activity Security
 **Goal:** Secure the "Keys to the Kingdom" and track usage.
 *   **Backend**:
-    *   [ ] **Secrets Stripping**: Ensure `GET /integrations` never returns API keys/tokens to frontend, regardless of role.
-    *   [ ] **Audit Logging**: Create `ActivityLogger` service. Record: `USER_INVITED`, `ROLE_UPDATED`, `SCAN_STARTED`, `PROJECT_CREATED`.
+    *   [x] **Secrets Stripping**: Ensure `GET /integrations` never returns API keys/tokens to frontend, regardless of role.
+    *   [x] **Audit Logging**: Create `ActivityLogger` service. Record: `USER_INVITED`, `ROLE_UPDATED`, `SCAN_STARTED`, `PROJECT_CREATED`.
 *   **Frontend**:
-    *   [ ] **Integrations Page**: Disable "Add/Edit" buttons for Devs/Viewers. Show "Contact Admin" tooltip.
-    *   [ ] **Activity Log Page**: Create a timeline view of workspace actions (Admin/Owner only).
+    *   [x] **Integrations Page**: Disable "Add/Edit" buttons for Devs/Viewers. Show "Contact Admin" tooltip.
+    *   [x] **Activity Log Page**: Create a timeline view of workspace actions (Admin/Owner only).
 
 ### Wave 4: Dashboard & Premium UX Polish
 **Goal:** A "Wowed" first impression for every role.

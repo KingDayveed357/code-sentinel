@@ -122,6 +122,7 @@ export default function MembersPage() {
   const canInvite = currentUserRole && membersApi.canInviteMembers(currentUserRole)
   const canRemove = currentUserRole && membersApi.canRemoveMembers(currentUserRole)
   const canChangeRoles = currentUserRole && membersApi.canChangeRoles(currentUserRole)
+  const canRevokeInvitations = currentUserRole ? ['owner', 'admin'].includes(currentUserRole) : false
 
   // Handlers
   const handleInviteMember = async () => {
@@ -203,6 +204,7 @@ export default function MembersPage() {
 
   const handleCancelInvitation = async (invitationId: string, email: string) => {
     if (!workspace?.id) return
+    if (!canRevokeInvitations) return
     
     try {
       setRevokingId(invitationId)
@@ -255,7 +257,7 @@ export default function MembersPage() {
     }
   }
 
-  const handleUpdateRole = async (memberId: string, memberName: string, newRole: 'owner' | 'admin' | 'member' | 'viewer') => {
+  const handleUpdateRole = async (memberId: string, memberName: string, newRole: 'owner' | 'admin' | 'developer' | 'viewer') => {
     if (!workspace?.id) return
 
     try {
@@ -426,7 +428,7 @@ export default function MembersPage() {
                                 <DropdownMenuContent align="end">
                                     <DropdownMenuLabel>Change Role</DropdownMenuLabel>
                                     <DropdownMenuSeparator />
-                                     {['admin', 'member', 'viewer'].map((role) => (
+                                     {['admin', 'developer', 'viewer'].map((role) => (
                                         <DropdownMenuItem 
                                             key={role}
                                             onClick={() => handleUpdateRole(member.id, member.full_name || member.email, role as any)}
@@ -486,16 +488,18 @@ export default function MembersPage() {
                                      </div>
                                 </div>
                                 <div className="flex flex-col items-end gap-2">
-                                     <Button 
-                                        variant="outline" 
-                                        size="sm" 
-                                        className="text-destructive hover:bg-destructive/10 border-destructive/20" 
-                                        onClick={() => handleCancelInvitation(inv.id, inv.email)}
-                                        disabled={revokingId === inv.id}
-                                     >
-                                        {revokingId === inv.id ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : null}
-                                        Revoke
-                                     </Button>
+                                     {canRevokeInvitations && (
+                                       <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="text-destructive hover:bg-destructive/10 border-destructive/20"
+                                          onClick={() => handleCancelInvitation(inv.id, inv.email)}
+                                          disabled={revokingId === inv.id}
+                                       >
+                                          {revokingId === inv.id ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : null}
+                                          Revoke
+                                       </Button>
+                                     )}
                                      {process.env.NODE_ENV === 'development' && (
                                          <div className="flex items-center gap-2 text-xs truncate text-muted-foreground bg-muted p-1 rounded">
                                             <LinkIcon className="h-3 w-3" />

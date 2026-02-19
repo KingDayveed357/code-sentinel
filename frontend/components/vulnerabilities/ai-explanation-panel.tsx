@@ -1,18 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
+import React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
   AlertCircle,
-  CheckCircle2,
-  ChevronDown,
   Loader2,
   Sparkles,
 } from "lucide-react";
@@ -36,15 +29,13 @@ export function AIExplanationPanel({
   onGenerate,
   onRetry,
 }: AIExplanationPanelProps) {
-  const [stepsOpen, setStepsOpen] = useState(true);
-
   return (
     <Card className="border-primary/20 bg-gradient-to-b from-primary/5 to-transparent">
       <CardHeader>
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <Sparkles className="h-5 w-5 text-primary" />
-            AI-Powered Explanation & Step-by-Step Fix
+            AI-Powered Vulnerability Brief
           </CardTitle>
           {state === "ready" && (
             <Badge variant="outline" className="border-primary/40 text-primary">
@@ -62,7 +53,7 @@ export function AIExplanationPanel({
         {state === "idle" && (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Generate an AI explanation with exploit impact and actionable remediation steps.
+              Generate an AI title, root cause summary, and first remediation step.
             </p>
             <Button size="sm" onClick={onGenerate}>
               <Sparkles className="mr-2 h-4 w-4" />
@@ -98,62 +89,25 @@ export function AIExplanationPanel({
         {state === "ready" && explanation && (
           <div className="space-y-4">
             <div className="rounded-md border bg-background/70 p-3">
-              <p className="text-sm leading-relaxed">{explanation.summary}</p>
+              <h4 className="mb-1 text-sm font-semibold">AI Title</h4>
+              <p className="text-sm leading-relaxed">{explanation.refined_title}</p>
             </div>
 
             <div>
-              <h4 className="mb-1 text-sm font-semibold">Impact</h4>
-              <p className="text-sm text-muted-foreground">{explanation.impact}</p>
-            </div>
-
-            <div>
-              <h4 className="mb-1 text-sm font-semibold">Exploitability</h4>
+              <h4 className="mb-1 text-sm font-semibold">Root Cause</h4>
               <p className="text-sm text-muted-foreground">
-                {explanation.exploitScenario}
+                {explanation.root_cause_summary}
               </p>
             </div>
 
             <div>
-              <h4 className="mb-1 text-sm font-semibold">Remediation Overview</h4>
+              <h4 className="mb-1 text-sm font-semibold">First Remediation Step</h4>
               <p className="text-sm text-muted-foreground">
-                {explanation.remediationOverview}
+                {explanation.remediation_step}
               </p>
             </div>
-
-            <Collapsible open={stepsOpen} onOpenChange={setStepsOpen}>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="w-full justify-between px-2">
-                  <span className="font-semibold">Step-by-Step Fix Plan</span>
-                  <ChevronDown
-                    className={`h-4 w-4 transition-transform ${
-                      stepsOpen ? "rotate-180" : ""
-                    }`}
-                  />
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="space-y-2 pt-2">
-                {explanation.stepByStepFix.map((step, index) => (
-                  <div
-                    key={`${step}-${index}`}
-                    className="flex items-start gap-2 rounded-md border bg-background px-3 py-2"
-                  >
-                    <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground">
-                        Action {index + 1}
-                      </p>
-                      <p className="text-sm">{step}</p>
-                    </div>
-                  </div>
-                ))}
-              </CollapsibleContent>
-            </Collapsible>
 
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge variant="outline">
-                Confidence {(explanation.confidence * 100).toFixed(0)}%
-              </Badge>
-              <Badge variant="outline">Citations {explanation.citations.length}</Badge>
               {explanation.provider && (
                 <Badge variant="outline">{explanation.provider}</Badge>
               )}

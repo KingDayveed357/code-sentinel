@@ -30,6 +30,7 @@ export const listRepositoriesSchema = z.object({
         .default("20")
         .transform((val) => parseInt(val, 10))
         .pipe(z.number().int().positive().max(100)),
+    view: z.enum(["all", "assigned"]).optional(),
 });
 
 export type ListRepositoriesInput = z.infer<typeof listRepositoriesSchema>;
