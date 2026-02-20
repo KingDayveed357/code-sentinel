@@ -7,10 +7,16 @@ import {
   type VulnerabilityExplanationInput,
 } from "../domain";
 import { getAiGateway, type VulnerabilityExplanationPayload } from "../application";
+import { canAccessVulnerability, isProjectScopedRole } from "../../authz/permissions";
 
 interface ExplanationRequestBody {
   regenerate?: boolean;
   promptVersion?: string;
+}
+
+interface UserContext {
+  userId: string;
+  role: string;
 }
 
 interface ExplanationResponse {
@@ -33,7 +39,8 @@ export class AiController {
   async generateVulnerabilityExplanation(
     workspaceId: string,
     vulnerabilityId: string,
-    body: ExplanationRequestBody = {}
+    body: ExplanationRequestBody = {},
+    userContext?: UserContext
   ): Promise<ExplanationResponse> {
     const { data: vulnerability, error } = await this.fastify.supabase
       .from("vulnerabilities_unified")
@@ -47,6 +54,23 @@ export class AiController {
       throw httpErrors
         ? httpErrors.notFound("Vulnerability not found")
         : new Error("Vulnerability not found");
+    }
+
+    if (userContext && isProjectScopedRole(userContext.role)) {
+      const allowed = await canAccessVulnerability(
+        this.fastify,
+        userContext.userId,
+        vulnerabilityId,
+        workspaceId,
+        userContext.role
+      );
+
+      if (!allowed) {
+        const httpErrors = (this.fastify as any).httpErrors;
+        throw httpErrors
+          ? httpErrors.forbidden("You do not have access to this vulnerability")
+          : new Error("You do not have access to this vulnerability");
+      }
     }
 
     const gateway = getAiGateway(this.fastify);

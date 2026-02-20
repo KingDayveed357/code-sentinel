@@ -201,7 +201,7 @@ export default function IntegrationsPage() {
             <div>
               <h3 className="font-medium text-blue-900 dark:text-blue-100">Access Restricted</h3>
               <p className="text-sm text-blue-700 dark:text-blue-300">
-                GitHub integrations are managed by your workspace admin.
+                GitHub repository imports are managed by workspace admins.
               </p>
             </div>
           </div>
@@ -347,7 +347,7 @@ export default function IntegrationsPage() {
                                     <Lock className="h-3 w-3 text-muted-foreground/70" />
                                   </TooltipTrigger>
                                   <TooltipContent>
-                                    <p>GitHub integrations are managed by your workspace admin.</p>
+                                    <p>GitHub repository imports are managed by workspace admins.</p>
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>

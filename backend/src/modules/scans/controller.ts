@@ -40,9 +40,11 @@ export async function startScanController(
   }
 
   const services = new ScansService(new ScansRepository(fastify), fastify);
+  const userRole = request.workspaceRole!;
   const result = await services.startScan(
     workspaceId,
     userId,
+    userRole,
     repositoryId,
     branch,
     scanType || "quick"
@@ -57,7 +59,9 @@ export async function getScanStatsController(
 ) {
   const { workspaceId } = request.params as { workspaceId: string };
   const services = new ScansService(new ScansRepository(fastify), fastify);
-  const result = await services.getScanStats(workspaceId);
+  const userId = request.supabaseUser!.id;
+  const userRole = request.workspaceRole!;
+  const result = await services.getScanStats(workspaceId, { userId, role: userRole });
   return reply.send(result);
 }
 
@@ -82,7 +86,9 @@ export async function cancelScanController(
 ) {
   const { workspaceId, scanId } = request.params as { workspaceId: string; scanId: string };
   const services = new ScansService(new ScansRepository(fastify), fastify);
-  const result = await services.cancelScan(workspaceId, scanId);
+  const userId = request.supabaseUser!.id;
+  const userRole = request.workspaceRole!;
+  const result = await services.cancelScan(workspaceId, scanId, { userId, role: userRole });
   return reply.send(result);
 }
 
@@ -94,8 +100,13 @@ export async function exportScanResultsController(
   const { workspaceId, scanId } = request.params as { workspaceId: string; scanId: string };
   const { format } = request.query as { format: "json" | "csv" };
   const services = new ScansService(new ScansRepository(fastify), fastify);
+  const userId = request.supabaseUser!.id;
+  const userRole = request.workspaceRole!;
 
-  const result = await services.exportScanResults(workspaceId, scanId, format);
+  const result = await services.exportScanResults(workspaceId, scanId, format, {
+    userId,
+    role: userRole,
+  });
   
   if (format === "csv") {
     reply.header("Content-Type", "text/csv");

@@ -13,20 +13,25 @@ export async function requireActiveWorkspace(
         return;
     }
 
-    const { type, billing_status } = request.workspace;
+    const { type, billing_status, plan } = request.workspace;
 
-    // Free workspaces are always considered "active" for now
-    if (type === 'personal' || request.workspace.plan === 'free') {
+    // Personal workspaces and Free plans are always considered "active" (functional)
+    // Team/Dev workspaces MUST be active to perform operations
+    if (type === 'personal' || plan === 'Free') {
         return;
     }
 
     if (billing_status !== 'active') {
         // Whitelist specific routes if needed (e.g. fetching workspace details, billing routes)
         // For now, we block everything else
-        request.log.warn({ workspaceId: request.workspace.id, status: billing_status }, "Access denied: Inactive workspace");
+        request.log.warn({ 
+            workspaceId: request.workspace.id, 
+            status: billing_status,
+            path: request.url
+        }, "Access denied: Inactive workspace");
         
         throw request.server.httpErrors.paymentRequired(
-            `Workspace is ${billing_status}. Please update your billing information/subscription.`
+            `Access restricted. Workspace status is ${billing_status}. Please update your billing information.`
         );
     }
 }

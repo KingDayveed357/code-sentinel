@@ -76,10 +76,17 @@ export function ProjectsList() {
   const [searchQuery, setSearchQuery] = useState(searchParams?.get("search") || "");
   const [providerFilter, setProviderFilter] = useState(searchParams?.get("provider") || "all");
   const [sortBy, setSortBy] = useState(searchParams?.get("sort") || "recent");
-  const { hasPermission, isOwnerOrAdmin, isDeveloper, isViewer, canCreateScans, canUpdateProject, canDeleteProjects } = usePermissions();
-  const [viewFilter, setViewFilter] = useState<"assigned" | "all">(
-    searchParams?.get("view") as any || ((isOwnerOrAdmin || isDeveloper) ? "all" : "assigned")
-  );
+  const { isOwnerOrAdmin, isViewer, canCreateScans, canUpdateProject, canDeleteProjects, canImportRepos } = usePermissions();
+  const requestedView = searchParams?.get("view");
+  const initialViewFilter: "assigned" | "all" =
+    requestedView === "assigned"
+      ? "assigned"
+      : requestedView === "all" && isOwnerOrAdmin
+        ? "all"
+        : isOwnerOrAdmin
+          ? "all"
+          : "assigned";
+  const [viewFilter, setViewFilter] = useState<"assigned" | "all">(initialViewFilter);
   const [statusFilter, setStatusFilter] = useState(
     searchParams?.get("sort") === "risk" ? "completed" : (searchParams?.get("status") || "all")
   );
@@ -157,8 +164,13 @@ export function ProjectsList() {
       };
     },
     enabled: !!workspace,
-    staleTime: 30 * 1000,
+    staleTime: 10 * 1000, // 10 seconds - more responsive to scan changes
     refetchOnMount: 'always',
+    // ✅ Smart polling: poll projects list when there are active scans
+    // so scan status badges update in real-time
+    refetchInterval: activeScans.some(
+      (s) => s.status === 'processing' || s.status === 'queued'
+    ) ? 8000 : false,
   });
 
   // Ensure persistent state is updated when a scan completes from the active tray
@@ -184,6 +196,13 @@ export function ProjectsList() {
       void refetch();
     }
   }, [activeScans, refetch]);
+
+  useEffect(() => {
+    if (!isOwnerOrAdmin && viewFilter !== "assigned") {
+      setViewFilter("assigned");
+      setPage(1);
+    }
+  }, [isOwnerOrAdmin, viewFilter]);
 
   const projects = projectsData?.projects 
     ? projectsData.projects.filter(p => !hiddenProjectIds.has(p.id)) 
@@ -316,12 +335,14 @@ export function ProjectsList() {
               <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               Sync
             </Button>
-            <Button asChild>
-              <Link href="/dashboard/integrations/github">
-                <Plus className="mr-2 h-4 w-4" />
-                Import Project
-              </Link>
-            </Button>
+            {canImportRepos && (
+              <Button asChild>
+                <Link href="/dashboard/integrations/github">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Import Project
+                </Link>
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -336,7 +357,7 @@ export function ProjectsList() {
       {/* Search and Filters */}
       <div className="flex flex-col gap-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          {(isOwnerOrAdmin || isDeveloper) && (
+          {isOwnerOrAdmin && (
             <Tabs 
               value={viewFilter} 
               onValueChange={(v: any) => {
@@ -456,7 +477,7 @@ export function ProjectsList() {
                 ? "Try adjusting your filters"
                 : "Get started by importing your first project"}
             </p>
-            {!searchQuery && providerFilter === "all" && statusFilter === "all" && (
+            {!searchQuery && providerFilter === "all" && statusFilter === "all" && canImportRepos && (
               <Button asChild>
                 <Link href="/dashboard/integrations/github">
                   <Plus className="mr-2 h-4 w-4" />

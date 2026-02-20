@@ -58,7 +58,11 @@ export async function registerAiRoutes(fastify: FastifyInstance): Promise<void> 
       const result = await controller.generateVulnerabilityExplanation(
         workspaceId,
         id,
-        body
+        body,
+        {
+          userId: request.supabaseUser!.id,
+          role: request.workspaceRole!,
+        }
       );
 
       if (result.state === "queued" || result.state === "processing") {

@@ -4,4 +4,5 @@ export * from "./policy-engine";
 export * from "./prompt-registry";
 export * from "./scan-auto-enrichment";
 export * from "./task-orchestrator";
+export * from "./title-sanity";
 export * from "./vulnerability-explanation-processor";

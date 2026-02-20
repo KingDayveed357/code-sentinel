@@ -28,8 +28,7 @@ import { useDashboardOverview, workspaceKeys } from "@/hooks/use-dashboard-data"
  * Uses React Query for proper workspace-aware data fetching and cache management
  */
 export function DashboardOverview() {
-  const { workspace, isSwitching } = useWorkspace();
-  const [userPlan, setUserPlan] = useState<string>("Free");
+  const { workspace, isSwitching, plan, isTeam: isTeamWorkspace } = useWorkspace();
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showBanner, setShowBanner] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
@@ -64,17 +63,8 @@ export function DashboardOverview() {
     },
     enabled: !!workspace,
     staleTime: 5 * 60 * 1000, // 5 minutes
-    retry: false, // Don't retry if onboarding API fails
+    retry: false,
   });
-
-  // Update user plan when profile loads
-  useEffect(() => {
-    if (userProfile?.user?.plan) {
-      setUserPlan(userProfile.user.plan);
-    } else if (workspace?.plan) {
-      setUserPlan(workspace.plan);
-    }
-  }, [userProfile, workspace?.plan]);
 
   // Determine banner visibility based on workspace and data
   useEffect(() => {
@@ -133,7 +123,7 @@ export function DashboardOverview() {
     return <DashboardError error={error} onRetry={() => refetch()} />;
   }
 
-  const canAccessTeam = userPlan === "Team" || userPlan === "Enterprise";
+  const canAccessTeam = plan === "Team" || plan === "Enterprise";
 
   return (
     <>
@@ -198,7 +188,7 @@ export function DashboardOverview() {
       <UpgradeModal
         open={showUpgradeModal}
         onOpenChange={setShowUpgradeModal}
-        currentPlan={userPlan}
+        currentPlan={plan}
       />
     </>
   );

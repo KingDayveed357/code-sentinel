@@ -9,13 +9,14 @@ import {
     updateSettingsSchema, 
 } from "./schemas";
 
-import { 
+import {
     getRepositorySettings, 
     updateRepositorySettings,
     registerGitHubWebhook,
     deleteGitHubWebhook,
     getWebhookStatus, 
 } from "../webhook/service";
+import { canImportRepos } from "../authz/permissions";
 
 /**
  * GET /repositories
@@ -60,7 +61,27 @@ export async function getGitHubReposController(
     reply: FastifyReply
 ) {
     const workspaceId = request.workspace!.id;
-    const result = await service.fetchGitHubReposForImport(request.server, workspaceId);
+    const role = request.workspaceRole;
+
+    if (!canImportRepos(role)) {
+        request.log.warn(
+            {
+                action: "repositories.github_repos.read_denied",
+                workspaceId,
+                userId: request.supabaseUser?.id,
+                role,
+            },
+            "Unauthorized GitHub repository import list access attempt"
+        );
+        throw request.server.httpErrors.forbidden(
+            "GitHub repository imports are managed by workspace admins."
+        );
+    }
+
+    const result = await service.fetchGitHubReposForImport(request.server, workspaceId, {
+        userId: request.supabaseUser!.id,
+        role: request.workspaceRole!,
+    });
 
     return reply.send(result);
 }
@@ -74,13 +95,31 @@ export async function importRepositoriesController(
     reply: FastifyReply
 ) {
     const workspaceId = request.workspace!.id; 
+    const role = request.workspaceRole;
+
+    if (!canImportRepos(role)) {
+        request.log.warn(
+            {
+                action: "repositories.import.denied",
+                workspaceId,
+                userId: request.supabaseUser?.id,
+                role,
+            },
+            "Unauthorized repository import attempt"
+        );
+        throw request.server.httpErrors.forbidden(
+            "GitHub repository imports are managed by workspace admins."
+        );
+    }
+
     const { repositories, provider } = importRepositoriesSchema.parse(request.body);
 
     const result = await service.importRepositories(
         request.server,
         workspaceId,
         repositories,
-        provider
+        provider,
+        { userId: request.supabaseUser!.id, role: request.workspaceRole! }
     );
 
     return reply.send(result);
@@ -169,8 +208,11 @@ export async function getRepositorySettingsController(
     const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
 
-    // Verify user owns this repository
-    const repo = await service.getRepository(request.server, workspaceId, id);
+    // Verify repository object-level access
+    const repo = await service.getRepository(request.server, workspaceId, id, {
+        userId: request.supabaseUser!.id,
+        role: request.workspaceRole!,
+    });
 
     // Get settings
     const settings = await getRepositorySettings(request.server, id);
@@ -232,8 +274,11 @@ export async function updateRepositorySettingsController(
     const { id } = repositoryIdSchema.parse(request.params);
     const updates = updateSettingsSchema.parse(request.body);
 
-    // Verify user owns this repository
-    const repo = await service.getRepository(request.server, workspaceId, id);
+    // Verify repository object-level access
+    const repo = await service.getRepository(request.server, workspaceId, id, {
+        userId: request.supabaseUser!.id,
+        role: request.workspaceRole!,
+    });
 
     // Update settings
     const settings = await updateRepositorySettings(request.server, id, updates);
@@ -276,8 +321,11 @@ export async function registerWebhookController(
     const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
 
-    // Verify user owns this repository
-    const repo = await service.getRepository(request.server, workspaceId, id);
+    // Verify repository object-level access
+    const repo = await service.getRepository(request.server, workspaceId, id, {
+        userId: request.supabaseUser!.id,
+        role: request.workspaceRole!,
+    });
 
     // Register webhook
     const result = await registerGitHubWebhook(
@@ -310,8 +358,11 @@ export async function deleteWebhookController(
     const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
 
-    // Verify user owns this repository
-    const repo = await service.getRepository(request.server, workspaceId, id);
+    // Verify repository object-level access
+    const repo = await service.getRepository(request.server, workspaceId, id, {
+        userId: request.supabaseUser!.id,
+        role: request.workspaceRole!,
+    });
 
     // Delete webhook
     const result = await deleteGitHubWebhook(
@@ -335,7 +386,10 @@ export async function getProjectMembersController(
     const workspaceId = request.workspace!.id;
     const { id } = repositoryIdSchema.parse(request.params);
 
-    const members = await service.getProjectMembers(request.server, workspaceId, id);
+    const members = await service.getProjectMembers(request.server, workspaceId, id, {
+        userId: request.supabaseUser!.id,
+        role: request.workspaceRole!,
+    });
     return reply.send(members);
 }
 

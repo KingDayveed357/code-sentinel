@@ -11,7 +11,10 @@ export async function getDashboardStatsController(
   reply: FastifyReply
 ) {
   const workspaceId = request.workspace!.id;
-  const stats = await service.getDashboardStats(request.server, workspaceId);
+  const stats = await service.getDashboardStats(request.server, workspaceId, {
+    userId: request.supabaseUser!.id,
+    role: request.workspaceRole!,
+  });
   return reply.send(stats);
 }
 
@@ -24,7 +27,14 @@ export async function getCriticalVulnerabilitiesController(
   reply: FastifyReply
 ) {
   const workspaceId = request.workspace!.id;
-  const vulnerabilities = await service.getCriticalVulnerabilities(request.server, workspaceId);
+  const vulnerabilities = await service.getCriticalVulnerabilities(
+    request.server,
+    workspaceId,
+    {
+      userId: request.supabaseUser!.id,
+      role: request.workspaceRole!,
+    }
+  );
   return reply.send({ vulnerabilities });
 }
 
@@ -37,7 +47,10 @@ export async function getRecentScansController(
   reply: FastifyReply
 ) {
   const workspaceId = request.workspace!.id;
-  const scans = await service.getRecentScans(request.server, workspaceId);
+  const scans = await service.getRecentScans(request.server, workspaceId, {
+    userId: request.supabaseUser!.id,
+    role: request.workspaceRole!,
+  });
   return reply.send({ scans });
 }
 
@@ -50,7 +63,10 @@ export async function getSecurityScoreController(
   reply: FastifyReply
 ) {
   const workspaceId = request.workspace!.id;
-  const score = await service.getSecurityScore(request.server, workspaceId);
+  const score = await service.getSecurityScore(request.server, workspaceId, {
+    userId: request.supabaseUser!.id,
+    role: request.workspaceRole!,
+  });
   return reply.send(score);
 }
 
@@ -63,12 +79,16 @@ export async function getDashboardOverviewController(
   reply: FastifyReply
 ) {
   const workspaceId = request.workspace!.id;
+  const userContext = {
+    userId: request.supabaseUser!.id,
+    role: request.workspaceRole!,
+  };
 
   const [stats, vulnerabilities, scans, score] = await Promise.all([
-    service.getDashboardStats(request.server, workspaceId),
-    service.getCriticalVulnerabilities(request.server, workspaceId),
-    service.getRecentScans(request.server, workspaceId),
-    service.getSecurityScore(request.server, workspaceId),
+    service.getDashboardStats(request.server, workspaceId, userContext),
+    service.getCriticalVulnerabilities(request.server, workspaceId, userContext),
+    service.getRecentScans(request.server, workspaceId, userContext),
+    service.getSecurityScore(request.server, workspaceId, userContext),
   ]);
 
   return reply.send({

@@ -35,7 +35,6 @@ export function NavbarGithubButton() {
     isOnboardingComplete,
     githubSignIn,
     logout,
-    userPlan,
   } = useAuth();
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -129,11 +128,6 @@ export function NavbarGithubButton() {
           <div className="flex flex-col space-y-1">
             <p className="text-sm font-medium leading-none">{fullName}</p>
             <p className="text-xs leading-none text-muted-foreground">{email}</p>
-            <div className="flex items-center gap-2 mt-2">
-              <Badge variant="secondary" className="text-xs">
-                {userPlan}
-              </Badge>
-            </div>
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
@@ -155,17 +149,7 @@ export function NavbarGithubButton() {
             Plan & Billing
           </Link>
         </DropdownMenuItem>
-        {userPlan === "Free" && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link href="/dashboard/billing" className="cursor-pointer text-primary">
-                <Sparkles className="mr-2 h-4 w-4" />
-                Upgrade Plan
-              </Link>
-            </DropdownMenuItem>
-          </>
-        )}
+        <DropdownMenuSeparator />
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={handleLogout}

@@ -254,6 +254,12 @@ export class EntitlementsService {
         .select('*', { count: 'exact', head: true })
         .eq('workspace_id', workspaceId);
 
+    // Get current member count
+    const { count: memberCount } = await this.fastify.supabase
+        .from('workspace_members')
+        .select('*', { count: 'exact', head: true })
+        .eq('workspace_id', workspaceId);
+
     return {
       plan,
       limits: {
@@ -264,11 +270,13 @@ export class EntitlementsService {
           ? null
           : limits.scans_per_month,
         concurrent_scans: limits.concurrent_scans,
+        seats: plan === 'Team' ? 10 : (plan === 'Enterprise' ? null : 1),
       },
       usage: {
         repositories: repoCount || 0,
         scans_this_month: usage.scans_used,
         concurrent_scans: usage.concurrent_scans,
+        seats: memberCount || 1,
       },
       remaining: {
         repositories: isUnlimited(limits.repositories)
@@ -278,6 +286,7 @@ export class EntitlementsService {
           ? null
           : limits.scans_per_month - usage.scans_used,
         concurrent_scans: limits.concurrent_scans - usage.concurrent_scans,
+        seats: plan === 'Team' ? 10 - (memberCount || 1) : (plan === 'Enterprise' ? null : 0),
       },
       period: {
         year: usage.period_year,

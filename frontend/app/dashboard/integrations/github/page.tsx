@@ -44,12 +44,14 @@ import { integrationsApi } from "@/lib/api/integrations";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useGitHubRepositories, useGitHubIntegrationStatus, workspaceKeys, useEntitlements } from "@/hooks/use-dashboard-data";
 import type { GitHubRepository, GitHubAccount } from "@/lib/api/repositories";
+import { usePermissions } from "@/hooks/use-permissions";
 import { toast } from 'sonner'
 
 export default function GitHubIntegrationPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { workspace, isSwitching } = useWorkspace();
+  const { workspace, isSwitching, refreshWorkspace } = useWorkspace();
+  const { canImportRepos, canManageIntegrations } = usePermissions();
   const queryClient = useQueryClient();
   
   // Use workspace-aware React Query hooks
@@ -64,7 +66,7 @@ export default function GitHubIntegrationPage() {
     isLoading: isLoadingRepos,
     isFetching: isFetchingRepos,
     refetch: refetchRepos,
-  } = useGitHubRepositories();
+  } = useGitHubRepositories({ enabled: canImportRepos });
 
   const {
     data: entitlements,
@@ -81,7 +83,7 @@ export default function GitHubIntegrationPage() {
     public_repos: reposData?.repositories?.length ?? 0, // Use actual count from repos data
   } : null;
   
-  const repositories = reposData?.repositories ?? [];
+  const repositories = canImportRepos ? (reposData?.repositories ?? []) : [];
   
   // Local UI state
   const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set());
@@ -109,6 +111,23 @@ export default function GitHubIntegrationPage() {
     setSelectedRepos(new Set());
   }, [workspace?.id]);
 
+  useEffect(() => {
+    if (!canImportRepos) {
+      setSelectedRepos(new Set());
+    }
+  }, [canImportRepos]);
+
+  const syncWorkspaceRoleIfForbidden = useCallback(async (err: any) => {
+    const message = String(err?.message || "").toLowerCase();
+    if (
+      message.includes("workspace admins") ||
+      message.includes("required role") ||
+      message.includes("access denied")
+    ) {
+      await refreshWorkspace().catch(() => undefined);
+    }
+  }, [refreshWorkspace]);
+
   const loadConnectionStatus = useCallback(async () => {
     try {
       setError(null);
@@ -116,18 +135,22 @@ export default function GitHubIntegrationPage() {
       await refetchStatus();
       
       // If connected, also load repositories
-      if (integrationStatus?.connected) {
+      if (integrationStatus?.connected && canImportRepos) {
         await refetchRepos();
       }
     } catch (err: any) {
       console.error('Failed to load connection status:', err);
       setError(err.message || "Failed to load GitHub status");
     }
-  }, [refetchStatus, refetchRepos, integrationStatus?.connected]);
+  }, [refetchStatus, refetchRepos, integrationStatus?.connected, canImportRepos]);
 
   const connectGitHubIntegration = useCallback(async (providerToken: string) => {
     if (!workspace) {
       setError('No workspace selected');
+      return;
+    }
+    if (!canManageIntegrations) {
+      setError("GitHub repository imports are managed by workspace admins.");
       return;
     }
     
@@ -149,6 +172,7 @@ export default function GitHubIntegrationPage() {
       }
     } catch (err: any) {
       console.error('Failed to connect GitHub:', err);
+      await syncWorkspaceRoleIfForbidden(err);
       toast.error(
         <div>
           <strong>Failed to connect GitHub integration:</strong><br />
@@ -159,7 +183,7 @@ export default function GitHubIntegrationPage() {
     } finally {
       setConnecting(false);
     }
-  }, [workspace, queryClient, loadConnectionStatus]);
+  }, [workspace, queryClient, loadConnectionStatus, canManageIntegrations, syncWorkspaceRoleIfForbidden]);
 
   const handlePageLoad = useCallback(async () => {
     if (!workspace) return; // Wait for workspace to be available
@@ -211,12 +235,17 @@ export default function GitHubIntegrationPage() {
   
 
   const loadRepositories = useCallback(async () => {
+    if (!canImportRepos) {
+      return;
+    }
+
     try {
       setError(null);
       // Refetch repositories - React Query will handle the loading state
       await refetchRepos();
     } catch (err: any) {
       console.error('Failed to load repositories:', err);
+      await syncWorkspaceRoleIfForbidden(err);
       
       if (err.message?.includes('not connected')) {
         // Status will be updated by React Query
@@ -234,7 +263,7 @@ export default function GitHubIntegrationPage() {
       
       throw err;
     }
-  }, [refetchRepos]);
+  }, [refetchRepos, canImportRepos, syncWorkspaceRoleIfForbidden]);
 
   /**
    * 🚨 CRITICAL FIX: Workspace-aware GitHub connection
@@ -245,6 +274,11 @@ export default function GitHubIntegrationPage() {
   const handleConnect = async () => {
     if (!workspace) {
       setError('No workspace selected');
+      return;
+    }
+
+    if (!canManageIntegrations) {
+      setError("GitHub repository imports are managed by workspace admins.");
       return;
     }
 
@@ -273,6 +307,7 @@ export default function GitHubIntegrationPage() {
       }
     } catch (err: any) {
       console.error('Failed to initiate connection:', err);
+      await syncWorkspaceRoleIfForbidden(err);
       setError(err.message || 'Failed to connect GitHub');
       setConnecting(false);
     }
@@ -281,6 +316,10 @@ export default function GitHubIntegrationPage() {
 
   const handleDisconnect = async () => {
     if (!workspace) return;
+    if (!canManageIntegrations) {
+      setError("GitHub repository imports are managed by workspace admins.");
+      return;
+    }
     try {
       setDisconnecting(true);
       setError(null);
@@ -308,6 +347,7 @@ export default function GitHubIntegrationPage() {
       }
     } catch (err: any) {
       console.error('Failed to disconnect GitHub:', err);
+      await syncWorkspaceRoleIfForbidden(err);
       toast.error(
         <div>
           <strong>Failed to disconnect GitHub:</strong><br />
@@ -322,6 +362,10 @@ export default function GitHubIntegrationPage() {
 
   const handleImport = async () => {
     if (selectedRepos.size === 0) return;
+    if (!canImportRepos) {
+      setError("GitHub repository imports are managed by workspace admins.");
+      return;
+    }
     
     try {
       setImporting(true);
@@ -361,6 +405,7 @@ export default function GitHubIntegrationPage() {
       }
     } catch (err: any) {
       console.error('Failed to import repositories:', err);
+      await syncWorkspaceRoleIfForbidden(err);
       const errorMessage = err.message || "Failed to import repositories";
       
       // Check if it's a repository limit error
@@ -444,6 +489,15 @@ export default function GitHubIntegrationPage() {
         </Alert>
       )}
 
+      {workspace && !canImportRepos && (
+        <Alert className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+          <Lock className="h-4 w-4" />
+          <AlertDescription>
+            GitHub repository imports are managed by workspace admins.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {isLimitReached && (
         <Alert variant="destructive" className="border-amber-500 bg-amber-50 dark:bg-amber-950/20 text-amber-900 dark:text-amber-400">
           <Crown className="h-4 w-4 text-amber-600" />
@@ -487,7 +541,12 @@ export default function GitHubIntegrationPage() {
                   </AlertDescription>
                 </Alert>
                 
-                <Button onClick={handleConnect} size="lg" className="w-full" disabled={connecting}>
+                <Button
+                  onClick={handleConnect}
+                  size="lg"
+                  className="w-full"
+                  disabled={connecting || !canManageIntegrations}
+                >
                   {connecting ? (
                     <>
                       <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -520,7 +579,12 @@ export default function GitHubIntegrationPage() {
                   </AlertDescription>
                 </Alert>
                 
-                <Button onClick={handleConnect} size="lg" className="w-full" disabled={connecting}>
+                <Button
+                  onClick={handleConnect}
+                  size="lg"
+                  className="w-full"
+                  disabled={connecting || !canManageIntegrations}
+                >
                   {connecting ? (
                     <>
                       <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -619,12 +683,17 @@ export default function GitHubIntegrationPage() {
                   <CardDescription>
                     Select repositories to import into CodeSentinel
                   </CardDescription>
+                  {!canImportRepos && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      GitHub repository imports are managed by workspace admins.
+                    </p>
+                  )}
                 </div>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={loadRepositories}
-                  disabled={loadingRepos}
+                  disabled={loadingRepos || !canImportRepos}
                 >
                   <RefreshCw className={`h-4 w-4 mr-2 ${loadingRepos ? 'animate-spin' : ''}`} />
                   Refresh
@@ -687,12 +756,16 @@ export default function GitHubIntegrationPage() {
                           selectedRepos.has(repo.full_name)
                             ? "bg-primary/5 border-primary"
                             : "hover:bg-muted/50"
-                        } ${repo.already_imported ? "opacity-50 cursor-not-allowed" : ""}`}
+                        } ${repo.already_imported || !canImportRepos ? "opacity-50 cursor-not-allowed" : ""}`}
                       >
                         <Checkbox
                           checked={selectedRepos.has(repo.full_name)}
                           onCheckedChange={() => toggleRepo(repo.full_name)}
-                          disabled={repo.already_imported || (!selectedRepos.has(repo.full_name) && !canSelectMore)}
+                          disabled={
+                            !canImportRepos ||
+                            repo.already_imported ||
+                            (!selectedRepos.has(repo.full_name) && !canSelectMore)
+                          }
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
@@ -746,7 +819,12 @@ export default function GitHubIntegrationPage() {
               <div className="flex gap-3 pt-4">
                 <Button
                   onClick={handleImport}
-                  disabled={selectedRepos.size === 0 || importing || (repositoriesRemaining !== null && selectedRepos.size > repositoriesRemaining)}
+                  disabled={
+                    !canImportRepos ||
+                    selectedRepos.size === 0 ||
+                    importing ||
+                    (repositoriesRemaining !== null && selectedRepos.size > repositoriesRemaining)
+                  }
                   className="flex-1"
                 >
                   {importing ? (
@@ -785,7 +863,7 @@ export default function GitHubIntegrationPage() {
               <Button 
                 variant="destructive" 
                 onClick={() => setShowDisconnectModal(true)}
-                disabled={disconnecting}
+                disabled={disconnecting || !canManageIntegrations}
               >
                 Disconnect GitHub
               </Button>
@@ -849,7 +927,7 @@ export default function GitHubIntegrationPage() {
             <Button
               variant="destructive"
               onClick={handleDisconnect}
-              disabled={disconnecting}
+              disabled={disconnecting || !canManageIntegrations}
             >
               {disconnecting ? (
                 <>

@@ -1,8 +1,11 @@
 // hooks/use-scan-status.ts - Real-time Scanning with Logs
 import { useState, useEffect, useRef, useCallback } from "react";
 import { scansApi, type Scan, type ScanLog, type ScanSummary } from "@/lib/api/scans";
+import { useWorkspace } from "@/hooks/use-workspace";
 
 export function useScanStatus(scanId: string, pollInterval: number = 3000) {
+  const { workspace } = useWorkspace();
+  const workspaceId = workspace?.id;
   const [scan, setScan] = useState<Scan | null>(null);
   const [summary, setSummary] = useState<ScanSummary | null>(null);
   const [logs, setLogs] = useState<ScanLog[]>([]);
@@ -15,10 +18,10 @@ export function useScanStatus(scanId: string, pollInterval: number = 3000) {
   const lastLogCountRef = useRef(0);
 
   const fetchStatus = useCallback(async () => {
-    if (!isMountedRef.current) return;
+    if (!isMountedRef.current || !workspaceId) return;
     
     try {
-      const data = await scansApi.getStatus(scanId);
+      const data = await scansApi.getStatus(workspaceId, scanId);
       
       if (!isMountedRef.current) return;
       
@@ -29,7 +32,7 @@ export function useScanStatus(scanId: string, pollInterval: number = 3000) {
       // Fetch logs if scan is in progress
       if (data.scan.status === 'processing') {
         
-        const logsData = await scansApi.getLogs(scanId);
+        const logsData = await scansApi.getLogs(workspaceId, scanId);
         
         if (!isMountedRef.current) return;
         
@@ -48,7 +51,7 @@ export function useScanStatus(scanId: string, pollInterval: number = 3000) {
         }
         
         // Fetch final logs
-        const logsData = await scansApi.getLogs(scanId);
+        const logsData = await scansApi.getLogs(workspaceId, scanId);
         if (isMountedRef.current) {
           setLogs(logsData.logs);
         }
@@ -66,9 +69,11 @@ export function useScanStatus(scanId: string, pollInterval: number = 3000) {
         setLoading(false);
       }
     }
-  }, [scanId]);
+  }, [scanId, workspaceId]);
 
   useEffect(() => {
+    if (!workspaceId) return;
+    
     isMountedRef.current = true;
     
     // Initial fetch
@@ -84,7 +89,7 @@ export function useScanStatus(scanId: string, pollInterval: number = 3000) {
         clearInterval(intervalRef.current);
       }
     };
-  }, [scanId, pollInterval, fetchStatus]);
+  }, [scanId, pollInterval, fetchStatus, workspaceId]);
 
   const refresh = useCallback(() => {
     setLoading(true);
@@ -104,6 +109,8 @@ export function useScanStatus(scanId: string, pollInterval: number = 3000) {
 
 // Hook for repository page with latest scan info
 export function useRepositoryScanStatus(repoId: string, pollInterval: number = 5000) {
+  const { workspace } = useWorkspace();
+  const workspaceId = workspace?.id;
   const [latestScan, setLatestScan] = useState<Scan | null>(null);
   const [logs, setLogs] = useState<ScanLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,10 +120,10 @@ export function useRepositoryScanStatus(repoId: string, pollInterval: number = 5
   const isMountedRef = useRef(true);
 
   const fetchLatestScan = useCallback(async () => {
-    if (!isMountedRef.current) return;
+    if (!isMountedRef.current || !workspaceId) return;
     
     try {
-      const data = await scansApi.getHistory(repoId, { page: 1, limit: 1 });
+      const data = await scansApi.getHistory(workspaceId, repoId, { page: 1, limit: 1 });
       
       if (!isMountedRef.current) return;
       
@@ -127,7 +134,7 @@ export function useRepositoryScanStatus(repoId: string, pollInterval: number = 5
         // Fetch logs if scan is in progress
         if (scan.status === 'processing') {
           
-          const logsData = await scansApi.getLogs(scan.id);
+          const logsData = await scansApi.getLogs(workspaceId, scan.id);
           if (isMountedRef.current) {
             setLogs(logsData.logs);
           }
@@ -145,9 +152,11 @@ export function useRepositoryScanStatus(repoId: string, pollInterval: number = 5
         setLoading(false);
       }
     }
-  }, [repoId]);
+  }, [repoId, workspaceId]);
 
   useEffect(() => {
+    if (!workspaceId) return;
+    
     isMountedRef.current = true;
     
     // Initial fetch
@@ -166,7 +175,7 @@ export function useRepositoryScanStatus(repoId: string, pollInterval: number = 5
         clearInterval(intervalRef.current);
       }
     };
-  }, [repoId, latestScan?.status, pollInterval, fetchLatestScan]);
+  }, [repoId, latestScan?.status, pollInterval, fetchLatestScan, workspaceId]);
 
   return {
     latestScan,

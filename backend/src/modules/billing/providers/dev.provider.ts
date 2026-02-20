@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { PaymentProvider, CheckoutSession } from '../types';
+import { PaymentProvider, CheckoutSession, Invoice, SubscriptionDetails } from '../types';
 
 export class DevPaymentProvider implements PaymentProvider {
   constructor(private fastify: FastifyInstance) {}
@@ -30,5 +30,49 @@ export class DevPaymentProvider implements PaymentProvider {
 
   async getSubscriptionStatus(subscriptionId: string): Promise<string> {
     return 'active';
+  }
+
+  async getSubscriptionDetails(workspaceId: string): Promise<SubscriptionDetails | null> {
+    this.fastify.log.info({ workspaceId }, 'Fetching mock subscription details');
+    
+    // In dev mode, we return a mock subscription
+    return {
+      id: `sub_dev_${workspaceId.slice(0, 8)}`,
+      workspace_id: workspaceId,
+      plan: 'Team',
+      status: 'active',
+      current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      cancel_at_period_end: false,
+      payment_method: {
+        brand: 'Visa',
+        last4: '4242'
+      }
+    };
+  }
+
+  async getInvoices(workspaceId: string): Promise<Invoice[]> {
+    this.fastify.log.info({ workspaceId }, 'Fetching mock invoices');
+    
+    // Return mock payment history
+    return [
+      {
+        id: `inv_dev_1`,
+        workspace_id: workspaceId,
+        amount: 4900,
+        currency: 'usd',
+        status: 'paid',
+        created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+        pdf_url: '#'
+      },
+      {
+        id: `inv_dev_2`,
+        workspace_id: workspaceId,
+        amount: 4900,
+        currency: 'usd',
+        status: 'paid',
+        created_at: new Date(Date.now() - 35 * 24 * 60 * 60 * 1000).toISOString(),
+        pdf_url: '#'
+      }
+    ];
   }
 }

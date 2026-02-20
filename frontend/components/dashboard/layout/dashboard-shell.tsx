@@ -44,7 +44,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
-  const { canAccessTeam, profileLoading, workspaceId } = useAuth();
+  const { profileLoading, workspaceId } = useAuth();
   const { hasPermission, isOwnerOrAdmin } = usePermissions();
   const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({
     running_scans: 0,

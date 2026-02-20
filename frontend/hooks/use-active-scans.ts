@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { scansApi } from "@/lib/api/scans";
 
@@ -38,6 +38,8 @@ export function useActiveScans() {
       }
     }
   }, []);
+
+  const queryClient = useQueryClient();
 
   const { data: activeScans = [], refetch } = useQuery({
     queryKey: ['active-scans', workspaceId],
@@ -97,16 +99,18 @@ export function useActiveScans() {
       }
     },
     enabled: !!workspaceId,
-    // ✅ SMART POLLING: Poll every 3 seconds when enabled
-    refetchInterval: (data) => {
-      // Stop polling if no active scans (only completed/failed)
-      // ✅ FIX: Be defensive - `data` may unexpectedly be a non-array (cache shape, errors, undefined)
+    // ✅ FIX: React Query v5 passes Query object, not data directly
+    refetchInterval: (query) => {
+      const data = query.state.data;
       const hasActiveScans = Array.isArray(data)
-        ? data.some((scan) => scan.status === "processing" || scan.status === "queued")
+        ? data.some((scan: Scan) => scan.status === "processing" || scan.status === "queued")
         : false;
-      return hasActiveScans ? 3000 : false;
+      // Poll every 3s when active scans exist, otherwise poll every 15s
+      // to catch newly started scans even without explicit invalidation
+      return hasActiveScans ? 3000 : 15000;
     },
     staleTime: 1000, // Keep data fresh
+    refetchOnWindowFocus: true, // Override global default for this critical query
   });
 
   // Filter out dismissed scans
@@ -126,11 +130,22 @@ export function useActiveScans() {
     localStorage.removeItem("dismissedScans");
   };
 
+  /**
+   * Force immediate refetch of active scans.
+   * Call this after starting a scan to ensure the tray updates instantly.
+   */
+  const triggerRefresh = useCallback(() => {
+    if (workspaceId) {
+      queryClient.invalidateQueries({ queryKey: ['active-scans', workspaceId] });
+    }
+  }, [workspaceId, queryClient]);
+
   return {
     activeScans: visibleScans,
     dismissScan,
     clearDismissed,
     refetch, // Expose refetch for manual refresh
+    triggerRefresh, // Invalidate + refetch (use after starting scans)
   };
 }
 

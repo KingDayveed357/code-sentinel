@@ -39,6 +39,16 @@ export const workspaceKeys = {
     [...workspaceKeys.all(workspaceId), 'invitations'] as const,
   activity: (workspaceId: string, limit: number = 20) => 
     [...workspaceKeys.all(workspaceId), 'activity', limit] as const,
+  scans: (workspaceId: string) =>
+    [...workspaceKeys.all(workspaceId), 'scans'] as const,
+  scansList: (workspaceId: string, params?: any) =>
+    [...workspaceKeys.scans(workspaceId), 'list', params] as const,
+  scanHistory: (workspaceId: string, repositoryId: string, params?: any) =>
+    [...workspaceKeys.scans(workspaceId), 'history', repositoryId, params] as const,
+  activeScans: (workspaceId: string) =>
+    [...workspaceKeys.scans(workspaceId), 'active'] as const,
+  scanStats: (workspaceId: string) =>
+    [...workspaceKeys.scans(workspaceId), 'stats'] as const,
 };
 
 // ... (existing hooks)
@@ -259,8 +269,9 @@ export function usePrefetchWorkspace() {
  * Hook to fetch GitHub repositories for import
  * Workspace-aware and prevents showing stale data
  */
-export function useGitHubRepositories() {
+export function useGitHubRepositories(options?: { enabled?: boolean }) {
   const workspace = useCurrentWorkspace();
+  const queryEnabled = options?.enabled ?? true;
 
   return useQuery({
     queryKey: workspace 
@@ -270,7 +281,7 @@ export function useGitHubRepositories() {
       // console.log('📦 Fetching GitHub repositories for workspace:', workspace?.name);
       return repositoriesApi.getGitHubRepos(workspace!.id);
     },
-    enabled: !!workspace,
+    enabled: !!workspace && queryEnabled,
     staleTime: 5 * 60 * 1000, // 5 minutes - GitHub repos don't change often
     refetchOnMount: false,
   });

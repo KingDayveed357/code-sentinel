@@ -28,6 +28,19 @@ export class OpenAiProvider implements ProviderInterface {
     const timeoutMs = request.timeoutMs ?? 15000;
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const startedAt = Date.now();
+    const responseFormat =
+      request.responseFormat === "json_schema" && request.responseSchema
+        ? {
+            type: "json_schema",
+            json_schema: {
+              name: request.responseSchema.name,
+              schema: request.responseSchema.schema,
+              strict: request.responseSchema.strict ?? true,
+            },
+          }
+        : request.responseFormat === "json_object"
+          ? { type: "json_object" }
+          : undefined;
 
     try {
       const response = await fetch(this.endpoint, {
@@ -41,9 +54,7 @@ export class OpenAiProvider implements ProviderInterface {
           model: this.model,
           temperature: request.temperature ?? 0.1,
           max_tokens: request.maxTokens ?? 500,
-          response_format: request.responseFormat
-            ? { type: request.responseFormat }
-            : undefined,
+          response_format: responseFormat,
           messages: [
             { role: "system", content: request.systemPrompt },
             { role: "user", content: request.prompt },

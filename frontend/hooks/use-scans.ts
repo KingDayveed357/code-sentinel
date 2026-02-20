@@ -1,6 +1,6 @@
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useWorkspace } from "@/hooks/use-workspace";
-import { scansApi, type Scan } from "@/lib/api/scans";
+import { scansApi, type Scan, type ScanStatus } from "@/lib/api/scans";
 
 export interface ScanFilters {
   page?: number;
@@ -49,8 +49,17 @@ export function useScans(filters: ScanFilters = {}) {
       });
     },
     enabled: !!workspaceId,
-    staleTime: 1000 * 30, // 30 seconds
+    staleTime: 5 * 1000, // 5 seconds - keep fresh for active monitoring
     placeholderData: keepPreviousData,
+    refetchOnWindowFocus: true, // Override global for scan-critical pages
+    // ✅ Smart polling: poll while any scan is in-progress, stop when all are terminal
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const hasActiveScans = data?.data?.some(
+        (s: Scan) => s.status === 'processing' || s.status === 'queued'
+      );
+      return hasActiveScans ? 5000 : false;
+    },
   });
 
   return {

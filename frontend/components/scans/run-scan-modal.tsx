@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Zap, Shield, Loader2, Crown, Info } from "lucide-react";
 import { scansApi } from "@/lib/api/scans";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 interface RunScanModalProps {
@@ -35,6 +36,7 @@ export function RunScanModal({
 }: RunScanModalProps) {
   const [selectedType, setSelectedType] = useState<"quick" | "full">("quick");
   const [isStarting, setIsStarting] = useState(false);
+  const queryClient = useQueryClient();
 
   const handleStartScan = async () => {
     setIsStarting(true);
@@ -43,6 +45,15 @@ export function RunScanModal({
         branch: defaultBranch,
         scan_type: selectedType,
       });
+
+      // ✅ CRITICAL: Immediately invalidate scan-related queries so the tray + pages update
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['active-scans', workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ['scans', workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId, 'scans'] }),
+        queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId, 'projects'] }),
+        queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId, 'dashboard'] }),
+      ]);
 
       toast.success(
         <div>

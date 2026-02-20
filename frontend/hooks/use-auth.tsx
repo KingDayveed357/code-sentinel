@@ -20,7 +20,6 @@ import { useWorkspaceStore } from "@/stores/workspace-store";
 
 
 type AuthUser = User & {
-  plan?: string;
   onboarding_completed?: boolean;
   full_name?: string;
   role?: string;
@@ -37,8 +36,6 @@ interface AuthContextValue {
   refreshUser: () => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
   isOnboardingComplete: boolean;
-  userPlan: string;
-  canAccessTeam: boolean;
   workspaceId: string | null;
   workspace: Workspace | null;
 }
@@ -149,8 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser((prev) => {
       if (
         prev?.id === profile.id &&
-        prev?.onboarding_completed === profile.onboarding_completed &&
-        prev?.plan === profile.plan
+        prev?.onboarding_completed === profile.onboarding_completed
       ) {
         return prev;
       }
@@ -289,12 +285,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [user?.onboarding_completed]
   );
   
-  const userPlan = useMemo(() => user?.plan || "Free", [user?.plan]);
-  const canAccessTeam = useMemo(
-    () => ["Team", "Enterprise"].includes(userPlan),
-    [userPlan]
-  );
-
   const workspaceId = useMemo(() => workspace?.id || null, [workspace?.id]);
 
   const value = useMemo(
@@ -308,8 +298,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshUser,
       refreshWorkspaces: fetchAndInitWorkspaces,
       isOnboardingComplete,
-      userPlan,
-      canAccessTeam,
       workspaceId,
       workspace,
     }),
@@ -323,8 +311,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshUser,
       fetchAndInitWorkspaces,
       isOnboardingComplete,
-      userPlan,
-      canAccessTeam,
       workspaceId,
       workspace,
     ]

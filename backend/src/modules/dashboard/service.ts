@@ -1,5 +1,11 @@
 // src/modules/dashboard/service.ts
 import type { FastifyInstance } from 'fastify';
+import { getAssignedProjectIds, isProjectScopedRole } from '../authz/permissions';
+
+type UserContext = {
+  userId: string;
+  role: string;
+};
 
 export interface DashboardStats {
   total_vulnerabilities: number;
@@ -49,81 +55,142 @@ export interface SecurityScore {
   low: number;
 }
 
+async function resolveAssignedScope(
+  fastify: FastifyInstance,
+  workspaceId: string,
+  userContext?: UserContext
+): Promise<string[] | null> {
+  if (!userContext || !isProjectScopedRole(userContext.role)) {
+    return null;
+  }
+
+  return getAssignedProjectIds(fastify, workspaceId, userContext.userId);
+}
+
 /**
  * Get dashboard statistics
  * ✅ Refactored to use vulnerabilities_unified as source of truth
  */
 export async function getDashboardStats(
   fastify: FastifyInstance,
-  workspaceId: string
+  workspaceId: string,
+  userContext?: UserContext
 ): Promise<DashboardStats> {
   const now = new Date();
   const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const lastDayLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+  const assignedRepositoryIds = await resolveAssignedScope(fastify, workspaceId, userContext);
+
+  if (assignedRepositoryIds && assignedRepositoryIds.length === 0) {
+    return {
+      total_vulnerabilities: 0,
+      repositories_scanned: 0,
+      scans_this_month: 0,
+      resolution_rate: 0,
+      changes: {
+        vulnerabilities: '0%',
+        repositories: '0',
+        scans: '0%',
+        resolution: '0%',
+      },
+    };
+  }
 
   // 1. Total Vulnerabilities (Open Unique Findings)
-  const { count: totalVulnerabilities } = await fastify.supabase
+  let totalVulnQuery = fastify.supabase
     .from('vulnerabilities_unified')
     .select('id', { count: 'exact', head: true })
     .eq('workspace_id', workspaceId)
     .eq('status', 'open');
+  if (assignedRepositoryIds) {
+    totalVulnQuery = totalVulnQuery.in('repository_id', assignedRepositoryIds);
+  }
+  const { count: totalVulnerabilities } = await totalVulnQuery;
 
   // 2. Fixed Vulnerabilities (For Resolution Rate)
-  const { count: totalFixed } = await fastify.supabase
+  let totalFixedQuery = fastify.supabase
     .from('vulnerabilities_unified')
     .select('id', { count: 'exact', head: true })
     .eq('workspace_id', workspaceId)
     .eq('status', 'fixed');
+  if (assignedRepositoryIds) {
+    totalFixedQuery = totalFixedQuery.in('repository_id', assignedRepositoryIds);
+  }
+  const { count: totalFixed } = await totalFixedQuery;
 
   const totalIssues = (totalVulnerabilities || 0) + (totalFixed || 0);
   const resolutionRate = totalIssues > 0 ? Math.round(((totalFixed || 0) / totalIssues) * 100) : 0;
 
   // 3. Last Month Stats (for change calculation)
-  const { count: lastMonthOpen } = await fastify.supabase
+  let lastMonthOpenQuery = fastify.supabase
     .from('vulnerabilities_unified')
     .select('id', { count: 'exact', head: true })
     .eq('workspace_id', workspaceId)
     .eq('status', 'open')
     .lte('first_detected_at', lastDayLastMonth.toISOString());
+  if (assignedRepositoryIds) {
+    lastMonthOpenQuery = lastMonthOpenQuery.in('repository_id', assignedRepositoryIds);
+  }
+  const { count: lastMonthOpen } = await lastMonthOpenQuery;
 
-  const { count: lastMonthFixed } = await fastify.supabase
+  let lastMonthFixedQuery = fastify.supabase
     .from('vulnerabilities_unified')
     .select('id', { count: 'exact', head: true })
     .eq('workspace_id', workspaceId)
     .eq('status', 'fixed')
     .lte('resolved_at', lastDayLastMonth.toISOString());
+  if (assignedRepositoryIds) {
+    lastMonthFixedQuery = lastMonthFixedQuery.in('repository_id', assignedRepositoryIds);
+  }
+  const { count: lastMonthFixed } = await lastMonthFixedQuery;
 
   const lastMonthTotal = (lastMonthOpen || 0) + (lastMonthFixed || 0);
   const lastMonthResolution = lastMonthTotal > 0 ? Math.round(((lastMonthFixed || 0) / lastMonthTotal) * 100) : 0;
 
   // 4. Repositories
-  const { count: repoCount } = await fastify.supabase
+  let repoCountQuery = fastify.supabase
     .from('repositories')
     .select('id', { count: 'exact', head: true })
     .eq('workspace_id', workspaceId)
     .eq('status', 'active');
+  if (assignedRepositoryIds) {
+    repoCountQuery = repoCountQuery.in('id', assignedRepositoryIds);
+  }
+  const { count: repoCount } = await repoCountQuery;
 
-  const { count: lastMonthRepoCount } = await fastify.supabase
+  let lastMonthRepoCountQuery = fastify.supabase
     .from('repositories')
     .select('id', { count: 'exact', head: true })
     .eq('workspace_id', workspaceId)
     .eq('status', 'active')
     .lte('created_at', lastDayLastMonth.toISOString());
+  if (assignedRepositoryIds) {
+    lastMonthRepoCountQuery = lastMonthRepoCountQuery.in('id', assignedRepositoryIds);
+  }
+  const { count: lastMonthRepoCount } = await lastMonthRepoCountQuery;
 
   // 5. Scans
-  const { count: scansThisMonth } = await fastify.supabase
+  let scansThisMonthQuery = fastify.supabase
     .from('scans')
     .select('id', { count: 'exact', head: true })
     .eq('workspace_id', workspaceId)
     .gte('created_at', firstDayThisMonth.toISOString());
+  if (assignedRepositoryIds) {
+    scansThisMonthQuery = scansThisMonthQuery.in('repository_id', assignedRepositoryIds);
+  }
+  const { count: scansThisMonth } = await scansThisMonthQuery;
 
-  const { count: scansLastMonth } = await fastify.supabase
+  let scansLastMonthQuery = fastify.supabase
     .from('scans')
     .select('id', { count: 'exact', head: true })
     .eq('workspace_id', workspaceId)
     .gte('created_at', firstDayLastMonth.toISOString())
     .lte('created_at', lastDayLastMonth.toISOString());
+  if (assignedRepositoryIds) {
+    scansLastMonthQuery = scansLastMonthQuery.in('repository_id', assignedRepositoryIds);
+  }
+  const { count: scansLastMonth } = await scansLastMonthQuery;
 
   // Calculate changes
   const vulnChange = calculatePercentageChange(lastMonthOpen || 0, totalVulnerabilities || 0);
@@ -151,9 +218,16 @@ export async function getDashboardStats(
  */
 export async function getCriticalVulnerabilities(
   fastify: FastifyInstance,
-  workspaceId: string
+  workspaceId: string,
+  userContext?: UserContext
 ): Promise<CriticalVulnerability[]> {
-  const { data: vulns } = await fastify.supabase
+  const assignedRepositoryIds = await resolveAssignedScope(fastify, workspaceId, userContext);
+
+  if (assignedRepositoryIds && assignedRepositoryIds.length === 0) {
+    return [];
+  }
+
+  let query = fastify.supabase
     .from('vulnerabilities_unified')
     .select(`
       id, severity, title, scanner_type, first_detected_at, cwe, repository_id,
@@ -165,6 +239,12 @@ export async function getCriticalVulnerabilities(
     .order('severity', { ascending: true }) // 'critical' < 'high' alphabetically? No. 'c' < 'h'. Yes. So ascending puts critical first.
     .order('first_detected_at', { ascending: false })
     .limit(5);
+
+  if (assignedRepositoryIds) {
+    query = query.in('repository_id', assignedRepositoryIds);
+  }
+
+  const { data: vulns } = await query;
 
   if (!vulns) return [];
 
@@ -187,10 +267,17 @@ export async function getCriticalVulnerabilities(
  */
 export async function getRecentScans(
   fastify: FastifyInstance,
-  workspaceId: string
+  workspaceId: string,
+  userContext?: UserContext
 ): Promise<RecentScan[]> {
+  const assignedRepositoryIds = await resolveAssignedScope(fastify, workspaceId, userContext);
+
+  if (assignedRepositoryIds && assignedRepositoryIds.length === 0) {
+    return [];
+  }
+
   // Fetch latest scans across workspace
-  const { data: scans } = await fastify.supabase
+  let query = fastify.supabase
     .from('scans')
     .select(`
       id, status, branch, vulnerabilities_found, 
@@ -201,6 +288,12 @@ export async function getRecentScans(
     .eq('workspace_id', workspaceId)
     .order('created_at', { ascending: false })
     .limit(50); // Fetch enough to find unique repos
+
+  if (assignedRepositoryIds) {
+    query = query.in('repository_id', assignedRepositoryIds);
+  }
+
+  const { data: scans } = await query;
 
   if (!scans) return [];
 
@@ -242,13 +335,20 @@ export async function getRecentScans(
  */
 export async function getSecurityScore(
   fastify: FastifyInstance,
-  workspaceId: string
+  workspaceId: string,
+  userContext?: UserContext
 ): Promise<SecurityScore> {
-  const { error, count, data: stats } = await fastify.supabase
-    .from('vulnerabilities_unified')
-    .select('severity', { count: 'exact' }) // This just gets total count if we don't group. Supabase client doesn't do GROUP BY easily.
-    .eq('workspace_id', workspaceId)
-    .eq('status', 'open');
+  const assignedRepositoryIds = await resolveAssignedScope(fastify, workspaceId, userContext);
+
+  if (assignedRepositoryIds && assignedRepositoryIds.length === 0) {
+    return {
+      overall: 100,
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    };
+  }
   
   // To avoid 4 separate queries, we can fetch all severities (if volume is low) or use RPC.
   // But given standard Supabase usage, 4 count queries is reliable and fast enough if indexed.
@@ -258,12 +358,18 @@ export async function getSecurityScore(
   const counts: Record<string, number> = {};
 
   await Promise.all(severities.map(async (sev) => {
-    const { count } = await fastify.supabase
+    let query = fastify.supabase
       .from('vulnerabilities_unified')
       .select('id', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId)
       .eq('status', 'open')
       .eq('severity', sev);
+
+    if (assignedRepositoryIds) {
+      query = query.in('repository_id', assignedRepositoryIds);
+    }
+
+    const { count } = await query;
     counts[sev] = count || 0;
   }));
 

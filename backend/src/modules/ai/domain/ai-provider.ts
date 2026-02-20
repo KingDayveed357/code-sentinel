@@ -1,5 +1,11 @@
 import type { AiTaskType } from "./ai-task-type";
 
+export interface AiProviderResponseSchema {
+  name: string;
+  schema: Record<string, unknown>;
+  strict?: boolean;
+}
+
 export interface AiProviderRequest {
   taskType: AiTaskType;
   systemPrompt: string;
@@ -8,7 +14,8 @@ export interface AiProviderRequest {
   maxTokens?: number;
   temperature?: number;
   timeoutMs?: number;
-  responseFormat?: "json_object";
+  responseFormat?: "json_object" | "json_schema";
+  responseSchema?: AiProviderResponseSchema;
   metadata?: Record<string, string | number | boolean>;
 }
 

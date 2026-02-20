@@ -8,6 +8,35 @@ import { validateRepositoryImport } from "./validation";
 import { EntitlementsService } from "../entitlements/service";
 import { IntegrationsRepository } from "../integrations/repository";
 import { logActivity } from "../../utils/activity-logger";
+import {
+    canAccessProject,
+    canImportRepos,
+    getAssignedProjectIds,
+    isProjectScopedRole,
+    isWorkspaceMember,
+} from "../authz/permissions";
+
+type UserContext = { userId: string; role: string };
+
+async function resolveProjectScopeIds(
+    fastify: FastifyInstance,
+    workspaceId: string,
+    userContext?: UserContext,
+    view?: "all" | "assigned"
+): Promise<string[] | null> {
+    const role = userContext?.role;
+    const requiresAssignmentScope = isProjectScopedRole(role) || view === "assigned";
+
+    if (!requiresAssignmentScope) {
+        return null;
+    }
+
+    if (!userContext?.userId) {
+        return [];
+    }
+
+    return getAssignedProjectIds(fastify, workspaceId, userContext.userId);
+}
 
 /**
  * Import repositories
@@ -18,9 +47,25 @@ export async function importRepositories(
     fastify: FastifyInstance,
     workspaceId: string,
     repositories: RepositoryImportInput[],
-    provider: "github" | "gitlab" | "bitbucket" = "github"
+    provider: "github" | "gitlab" | "bitbucket" = "github",
+    userContext?: UserContext
 ): Promise<{ success: boolean; imported: number; skipped: number; limit_reached: boolean }> {
     try {
+        if (userContext && !canImportRepos(userContext.role)) {
+            fastify.log.warn(
+                {
+                    action: "repositories.import.denied",
+                    workspaceId,
+                    userId: userContext.userId,
+                    role: userContext.role,
+                },
+                "Unauthorized repository import attempt"
+            );
+            throw fastify.httpErrors.forbidden(
+                "GitHub repository imports are managed by workspace admins."
+            );
+        }
+
         // Validate import against plan limits
         const validation = await validateRepositoryImport(
             fastify,
@@ -110,8 +155,9 @@ export async function getWorkspaceRepositories(
         status?: string;
         limit?: number;
         offset?: number;
+        view?: "all" | "assigned";
     } = {},
-    userContext?: { userId: string; role: string }
+    userContext?: UserContext
 ): Promise<{
     repositories: DatabaseRepository[];
     total: number;
@@ -119,6 +165,7 @@ export async function getWorkspaceRepositories(
     offset: number;
 }> {
     const { search, provider, private: isPrivate, status, limit = 20, offset = 0, view } = options;
+    const scopedProjectIds = await resolveProjectScopeIds(fastify, workspaceId, userContext, view);
 
     // ✅ FIX: Check if status is a scan status (not a repository status)
     const scanStatuses = ["completed", "running", "normalizing", "ai_enriching", "failed", "pending", "cancelled", "never_scanned", "processing"];
@@ -131,7 +178,15 @@ export async function getWorkspaceRepositories(
         return filterRepositoriesByScanStatus(
             fastify,
             workspaceId,
-            { search, provider, private: isPrivate, status, limit, offset }
+            {
+                search,
+                provider,
+                private: isPrivate,
+                status,
+                limit,
+                offset,
+                allowedProjectIds: scopedProjectIds,
+            }
         );
     }
 
@@ -141,32 +196,17 @@ export async function getWorkspaceRepositories(
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false });
 
-    /**
-     * ✅ RBAC / View Filter Logic:
-     * 1. 'developer' role ALWAYS sees only assigned projects.
-     * 2. Other roles (owner, admin, viewer) see all by default, but can filter by 'assigned'.
-     */
-    const forceAssigned = userContext?.role === 'viewer' || view === 'assigned';
-
-    if (forceAssigned) {
-        const { data: assignments } = await fastify.supabase
-            .from('project_members')
-            .select('project_id')
-            .eq('user_id', userContext?.userId);
-            
-        const assignedIds = (assignments || []).map(a => a.project_id);
-        
-        if (assignedIds.length === 0) {
-            // No assignments -> return empty result immediately
+    if (scopedProjectIds) {
+        if (scopedProjectIds.length === 0) {
             return {
                 repositories: [],
                 total: 0,
                 limit,
-                offset
+                offset,
             };
         }
-        
-        query = query.in('id', assignedIds);
+
+        query = query.in("id", scopedProjectIds);
     }
 
     if (search) {
@@ -215,6 +255,7 @@ async function filterRepositoriesByScanStatus(
         status?: string;
         limit: number;
         offset: number;
+        allowedProjectIds?: string[] | null;
     }
 ): Promise<{
     repositories: DatabaseRepository[];
@@ -222,7 +263,16 @@ async function filterRepositoriesByScanStatus(
     limit: number;
     offset: number;
 }> {
-    const { search, provider, private: isPrivate, status, limit, offset } = options;
+    const { search, provider, private: isPrivate, status, limit, offset, allowedProjectIds } = options;
+
+    if (allowedProjectIds && allowedProjectIds.length === 0) {
+        return {
+            repositories: [],
+            total: 0,
+            limit,
+            offset,
+        };
+    }
 
     // Step 1: Get all repositories with their latest scan status (ordered by scan date desc)
     let repoQuery = fastify.supabase
@@ -230,6 +280,10 @@ async function filterRepositoriesByScanStatus(
         .select("*, scans:scans(status, created_at) order by scans(created_at.desc) limit 1")
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false });
+
+    if (allowedProjectIds) {
+        repoQuery = repoQuery.in("id", allowedProjectIds);
+    }
 
     if (search) {
         repoQuery = repoQuery.or(`name.ilike.%${search}%,full_name.ilike.%${search}%`);
@@ -352,7 +406,7 @@ export async function getRepositoryById(
     fastify: FastifyInstance,
     workspaceId: string,
     repoId: string,
-    userContext?: { userId: string; role: string }
+    userContext?: UserContext
 ): Promise<DatabaseRepository> {
     const { data: repo, error } = await fastify.supabase
         .from("repositories")
@@ -365,16 +419,17 @@ export async function getRepositoryById(
         throw fastify.httpErrors.notFound("Repository not found");
     }
 
-    if (userContext?.role === 'developer') {
-         const { data: assignment } = await fastify.supabase
-            .from('project_members')
-            .select('id')
-            .eq('project_id', repoId)
-            .eq('user_id', userContext.userId)
-            .single();
+    if (userContext && isProjectScopedRole(userContext.role)) {
+        const allowed = await canAccessProject(
+            fastify,
+            userContext.userId,
+            repoId,
+            workspaceId,
+            userContext.role
+        );
 
-        if (!assignment) {
-             throw fastify.httpErrors.notFound("Repository not found"); // Hide existence
+        if (!allowed) {
+            throw fastify.httpErrors.forbidden("You do not have access to this project");
         }
     }
 
@@ -415,22 +470,22 @@ export async function updateRepository(
         default_branch?: string;
         status?: "active" | "inactive" | "error";
     },
-    userContext?: { userId: string; role: string }
+    userContext?: UserContext
 ): Promise<DatabaseRepository> {
-    
-    // Check access first if needed
-    if (userContext?.role === 'viewer') {
-         const { data: assignment } = await fastify.supabase
-            .from('project_members')
-            .select('id')
-            .eq('project_id', repoId)
-            .eq('user_id', userContext.userId)
-            .single();
+    if (userContext && isProjectScopedRole(userContext.role)) {
+        const allowed = await canAccessProject(
+            fastify,
+            userContext.userId,
+            repoId,
+            workspaceId,
+            userContext.role
+        );
 
-        if (!assignment) {
-             throw fastify.httpErrors.notFound("Repository not found");
+        if (!allowed) {
+            throw fastify.httpErrors.forbidden("You do not have access to this project");
         }
     }
+
     const updateData = {
         ...updates,
         updated_at: new Date().toISOString(),
@@ -486,7 +541,7 @@ export async function listRepositories(
         limit?: number;
         view?: 'all' | 'assigned';
     },
-    userContext?: { userId: string; role: string }
+    userContext?: UserContext
 ) {
     const { page = 1, limit = 20, ...filters } = params;
     const offset = (page - 1) * limit;
@@ -568,8 +623,24 @@ export async function getConnectedProviders(
  */
 export async function fetchGitHubReposForImport(
     fastify: FastifyInstance,
-    workspaceId: string
+    workspaceId: string,
+    userContext?: UserContext
 ) {
+    if (userContext && !canImportRepos(userContext.role)) {
+        fastify.log.warn(
+            {
+                action: "repositories.github_repos.read_denied",
+                workspaceId,
+                userId: userContext.userId,
+                role: userContext.role,
+            },
+            "Unauthorized GitHub repository import list access attempt"
+        );
+        throw fastify.httpErrors.forbidden(
+            "GitHub repository imports are managed by workspace admins."
+        );
+    }
+
     // Instantiate GitHub service
     const integrationsRepo = new IntegrationsRepository(fastify);
     const gitHubService = new GitHubService(integrationsRepo, fastify);
@@ -605,13 +676,15 @@ export async function importRepositoriesWithLimits(
     fastify: FastifyInstance,
     workspaceId: string,
     repositories: RepositoryImportInput[],
-    provider: "github" | "gitlab" | "bitbucket" = "github"
+    provider: "github" | "gitlab" | "bitbucket" = "github",
+    userContext?: UserContext
 ) {
     const result = await importRepositories(
         fastify,
         workspaceId,
         repositories,
-        provider
+        provider,
+        userContext
     );
 
     // Get updated count and limits
@@ -653,7 +726,7 @@ export async function getRepository(
     fastify: FastifyInstance,
     workspaceId: string,
     repoId: string,
-    userContext?: { userId: string; role: string }
+    userContext?: UserContext
 ): Promise<DatabaseRepository> {
     return await getRepositoryById(fastify, workspaceId, repoId, userContext);
 }
@@ -664,8 +737,23 @@ export async function getRepository(
 export async function getProjectMembers(
     fastify: FastifyInstance,
     workspaceId: string,
-    projectId: string
+    projectId: string,
+    userContext?: UserContext
 ) {
+    if (userContext && isProjectScopedRole(userContext.role)) {
+        const allowed = await canAccessProject(
+            fastify,
+            userContext.userId,
+            projectId,
+            workspaceId,
+            userContext.role
+        );
+
+        if (!allowed) {
+            throw fastify.httpErrors.forbidden("You do not have access to this project");
+        }
+    }
+
     const { data: assignments, error } = await fastify.supabase
         .from('project_members')
         .select('id, user_id, assigned_by, created_at')
@@ -711,16 +799,26 @@ export async function assignProjectMember(
     userId: string,
     assignedBy: string
 ) {
-    // 1. Verify user is a member of the workspace
-    const { data: member, error: memberError } = await fastify.supabase
-        .from('workspace_members')
-        .select('id')
-        .eq('workspace_id', workspaceId)
-        .eq('user_id', userId)
-        .eq('status', 'active')
-        .single();
+    const { data: project, error: projectError } = await fastify.supabase
+        .from("repositories")
+        .select("id")
+        .eq("id", projectId)
+        .eq("workspace_id", workspaceId)
+        .maybeSingle();
 
-    if (memberError || !member) {
+    if (projectError) {
+        fastify.log.error({ projectError, projectId, workspaceId }, "Failed to verify project");
+        throw fastify.httpErrors.internalServerError("Failed to assign project member");
+    }
+
+    if (!project) {
+        throw fastify.httpErrors.notFound("Project not found");
+    }
+
+    // 1. Verify user is a member of the workspace
+    const isMember = await isWorkspaceMember(fastify, workspaceId, userId);
+
+    if (!isMember) {
         throw fastify.httpErrors.badRequest('User is not an active member of this workspace');
     }
 

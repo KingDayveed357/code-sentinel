@@ -49,7 +49,7 @@ export class PromptRegistry {
       taskType: AiTaskType.VulnerabilityExplanation,
       version: "v1",
       systemPrompt:
-        "You are a Senior Security Communications Engineer. Return JSON only. Do not include markdown.",
+        "You are a Senior Security Communications Engineer. Respond with valid JSON only, no markdown and no extra prose.",
       template: `Task: Transform raw security scanner metadata into a human-readable, high-impact vulnerability title and concise fix guidance.
 
 Required JSON shape:
@@ -60,12 +60,12 @@ Required JSON shape:
 }
 
 Rules:
-- refined_title must start with the impact or specific flaw.
-- refined_title must be Title Case and fewer than 10 words.
+- refined_title must be a concise noun phrase (not a sentence) and must start with the specific flaw or risk.
+- refined_title must be Title Case and 3 to 12 words.
 - refined_title must remove scanner noise, IDs, tool tags, and severity labels.
-- refined_title must not include category labels such as "Admin Assets".
-- refined_title must not include trailing numeric suffixes like "2" or "3".
-- refined_title must never look like concatenated metadata.
+- refined_title must not include category labels such as "Admin Assets" (or hyphen/underscore variants).
+- refined_title must not include instructional phrases like "you should", "must", "return only", or similar directives.
+- refined_title must not include fragmented words such as "Echo Ing".
 - root_cause_summary must be one sentence, concise, and explain why this exists.
 - remediation_step must be one sentence, actionable, and specific.
 - Audience is founders and junior developers. Answer: what is the risk?

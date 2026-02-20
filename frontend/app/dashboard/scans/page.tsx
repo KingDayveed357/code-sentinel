@@ -113,7 +113,7 @@ export default function ScansPage() {
                       status={scan.status}
                       progressPercentage={scan.progress_percentage}
                       progressStage={scan.progress_stage}
-                      showProgress={scan.status === "running"}
+                      showProgress={scan.status === "processing"}
                       size="sm"
                     />
                   </TableCell>

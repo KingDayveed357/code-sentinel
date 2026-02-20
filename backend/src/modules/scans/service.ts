@@ -6,6 +6,12 @@ import { getProfile } from "../../scanners/scan-profiles";
 import { ScanStatus } from "./types";
 import type { ScanFilters, ScanDetail, PaginatedScansResponse, ScanWithRepository } from "./types";
 import { logActivity } from "../../utils/activity-logger";
+import {
+  canAccessProject,
+  canAccessScan,
+  getAssignedProjectIds,
+  isProjectScopedRole,
+} from "../authz/permissions";
 
 export class ScansService {
   constructor(
@@ -16,18 +22,13 @@ export class ScansService {
   async startScan(
     workspaceId: string,
     userId: string,
+    userRole: string,
     repositoryId: string,
     branch: string,
     scanType: "quick" | "full"
   ): Promise<{ scan_id: string; status: string; message: string }> {
     const normalizedScanType = scanType || "full";
     const entitlements = new EntitlementsService(this.fastify);
-
-    // Check monthly limit
-    const monthlyLimitCheck = await entitlements.checkMonthlyLimit(workspaceId);
-    if (!monthlyLimitCheck.allowed) {
-      throw this.fastify.httpErrors.forbidden(monthlyLimitCheck.message || 'Monthly scan limit reached');
-    }
 
     // Validate repository
     const { data: repo, error: repoError } = await this.fastify.supabase
@@ -41,8 +42,28 @@ export class ScansService {
       throw this.fastify.httpErrors.notFound("Repository not found");
     }
 
+    if (isProjectScopedRole(userRole)) {
+      const allowed = await canAccessProject(
+        this.fastify,
+        userId,
+        repositoryId,
+        workspaceId,
+        userRole
+      );
+
+      if (!allowed) {
+        throw this.fastify.httpErrors.forbidden("You do not have access to this project");
+      }
+    }
+
     if (repo.status !== "active") {
       throw this.fastify.httpErrors.badRequest("Repository is not active");
+    }
+
+    // Check monthly limit
+    const monthlyLimitCheck = await entitlements.checkMonthlyLimit(workspaceId);
+    if (!monthlyLimitCheck.allowed) {
+      throw this.fastify.httpErrors.forbidden(monthlyLimitCheck.message || 'Monthly scan limit reached');
     }
 
     // Check concurrent limit
@@ -115,7 +136,27 @@ export class ScansService {
     filters: ScanFilters,
     userContext?: { userId: string; role: string }
   ): Promise<PaginatedScansResponse> {
-    const { data, count } = await this.repository.findAll(workspaceId, filters, userContext);
+    let accessibleProjectIds: string[] | undefined;
+
+    if (userContext && isProjectScopedRole(userContext.role)) {
+      accessibleProjectIds = await getAssignedProjectIds(
+        this.fastify,
+        workspaceId,
+        userContext.userId
+      );
+
+      if (filters.repository_id && !accessibleProjectIds.includes(filters.repository_id)) {
+        throw this.fastify.httpErrors.forbidden(
+          "You do not have access to scans for this project"
+        );
+      }
+    }
+
+    const { data, count } = await this.repository.findAll(
+      workspaceId,
+      filters,
+      accessibleProjectIds
+    );
 
     const scans: ScanWithRepository[] = data.map((scan: any) => ({
       ...scan,
@@ -138,9 +179,23 @@ export class ScansService {
   }
 
   async getScanDetails(workspaceId: string, scanId: string, userContext?: { userId: string; role: string }): Promise<ScanDetail> {
-    const scan = await this.repository.findById(scanId, workspaceId, userContext);
+    const scan = await this.repository.findById(scanId, workspaceId);
     if (!scan) {
       throw this.fastify.httpErrors.notFound(`Scan not found. ID: ${scanId}`);
+    }
+
+    if (userContext && isProjectScopedRole(userContext.role)) {
+      const allowed = await canAccessScan(
+        this.fastify,
+        userContext.userId,
+        scanId,
+        workspaceId,
+        userContext.role
+      );
+
+      if (!allowed) {
+        throw this.fastify.httpErrors.forbidden("You do not have access to this scan");
+      }
     }
 
     // Fetch instances and logs
@@ -206,14 +261,35 @@ export class ScansService {
     };
   }
 
-  async getScanStats(workspaceId: string) {
+  async getScanStats(workspaceId: string, userContext?: { userId: string; role: string }) {
     // This could also be moved to Repository if we want precise counting
     // For now, fetching all status is okay but inefficient for huge tables
     // Optimally: Repo should have countByStatus method
-    const { data: scans } = await this.fastify.supabase
+    let query = this.fastify.supabase
       .from("scans")
       .select("status")
       .eq("workspace_id", workspaceId);
+
+    if (userContext && isProjectScopedRole(userContext.role)) {
+      const assignedProjectIds = await getAssignedProjectIds(
+        this.fastify,
+        workspaceId,
+        userContext.userId
+      );
+
+      if (assignedProjectIds.length === 0) {
+        return {
+          total: 0,
+          running: 0,
+          completed: 0,
+          failed: 0,
+        };
+      }
+
+      query = query.in("repository_id", assignedProjectIds);
+    }
+
+    const { data: scans } = await query;
 
     return {
       total: scans?.length || 0,
@@ -223,9 +299,27 @@ export class ScansService {
     };
   }
 
-  async cancelScan(workspaceId: string, scanId: string, userId?: string): Promise<{ success: boolean; message: string }> {
+  async cancelScan(
+    workspaceId: string,
+    scanId: string,
+    userContext?: { userId: string; role: string }
+  ): Promise<{ success: boolean; message: string }> {
     const scan = await this.repository.findById(scanId, workspaceId);
     if (!scan) throw this.fastify.httpErrors.notFound("Scan not found");
+
+    if (userContext && isProjectScopedRole(userContext.role)) {
+      const allowed = await canAccessScan(
+        this.fastify,
+        userContext.userId,
+        scanId,
+        workspaceId,
+        userContext.role
+      );
+
+      if (!allowed) {
+        throw this.fastify.httpErrors.forbidden("You do not have access to this scan");
+      }
+    }
 
     if (scan.status === ScanStatus.COMPLETED || scan.status === ScanStatus.FAILED) {
       throw this.fastify.httpErrors.badRequest("Cannot cancel completed or failed scan");
@@ -239,7 +333,7 @@ export class ScansService {
     // Audit log — fire-and-forget
     logActivity(this.fastify, {
       workspaceId,
-      actorId: userId ?? null,
+      actorId: userContext?.userId ?? null,
       action: 'scan.cancelled',
       resourceType: 'scan',
       resourceId: scanId,
@@ -252,9 +346,10 @@ export class ScansService {
   async exportScanResults(
     workspaceId: string,
     scanId: string,
-    format: "json" | "csv"
+    format: "json" | "csv",
+    userContext?: { userId: string; role: string }
   ): Promise<any> {
-    const details = await this.getScanDetails(workspaceId, scanId);
+    const details = await this.getScanDetails(workspaceId, scanId, userContext);
     const instances = await this.repository.getScanInstances(scanId);
 
     const flatVulns = instances.map((inst) => ({

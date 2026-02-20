@@ -48,7 +48,7 @@ export default function CreateWorkspacePage() {
   const { switchWorkspace } = useWorkspace()
   const { createWorkspace } = useWorkspaces()
   
-  const [step, setStep] = useState<'details' | 'members' | 'confirm'>(user?.plan === 'Free' || user?.plan === 'Dev' ? 'details' : 'details')
+  const [step, setStep] = useState<'details' | 'members' | 'confirm'>('details')
   const [workspaceName, setWorkspaceName] = useState("")
   const [workspaceSlug, setWorkspaceSlug] = useState("")
   const [members, setMembers] = useState<TeamMemberInvite[]>([])
@@ -57,7 +57,6 @@ export default function CreateWorkspacePage() {
   const [creating, setCreating] = useState(false)
   const [slugError, setSlugError] = useState("")
 
-  const userPlan = user?.plan || 'Free'
   // Any user can create a team workspace (it starts a new billing subscription)
   const canCreateTeam = true; 
 

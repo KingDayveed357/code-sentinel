@@ -49,6 +49,7 @@ import {
   type VulnerabilityExplanation,
 } from "@/lib/api/vulnerabilities";
 import { InstanceLocations } from "@/components/vulnerabilities/instance-locations";
+import { VulnerabilityAssigneeSelect } from "@/components/vulnerabilities/vulnerability-assignee-select";
 
 interface VulnerabilityDetail {
   id: string;
@@ -524,16 +525,12 @@ export default function VulnerabilityDetailPage() {
               <CardTitle className="text-base">Assignment</CardTitle>
             </CardHeader>
             <CardContent>
-              <Select defaultValue={vulnerability.assigned_to || "unassigned"}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Assign to..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unassigned">Unassigned</SelectItem>
-                  <SelectItem value="user1">User 1</SelectItem>
-                  <SelectItem value="user2">User 2</SelectItem>
-                </SelectContent>
-              </Select>
+              <VulnerabilityAssigneeSelect 
+                workspaceId={workspaceId!}
+                vulnerabilityId={vulnId} 
+                assignedTo={vulnerability.assigned_to}
+                onAssign={(userId) => setVulnerability(prev => prev ? { ...prev, assigned_to: userId } : null)}
+              />
             </CardContent>
           </Card>
 

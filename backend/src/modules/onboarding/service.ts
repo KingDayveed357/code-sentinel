@@ -2,10 +2,13 @@
 
 import type { FastifyInstance } from "fastify";
 import type { RepositoryImportInput } from "../integrations/github/types";
-import { GitHubService } from "../integrations/github/service";
-import { IntegrationsRepository } from "../integrations/repository";
 import * as repoService from "../repositories/service";
 import type { OnboardingState } from "./state-machine";
+
+type UserContext = {
+    userId: string;
+    role: string;
+};
 
 /**
  * Get onboarding steps configuration
@@ -95,13 +98,17 @@ export async function getOnboardingStatus(
  */
 export async function fetchGitHubRepositories(
     fastify: FastifyInstance,
-    workspaceId: string
+    workspaceId: string,
+    userContext?: UserContext
 ) {
     try {
-        const integrationsRepo = new IntegrationsRepository(fastify);
-        const githubService = new GitHubService(integrationsRepo, fastify);
-        
-        return await githubService.fetchRepositories(workspaceId);
+        const result = await repoService.fetchGitHubReposForImport(
+            fastify,
+            workspaceId,
+            userContext
+        );
+
+        return result.repositories;
     } catch (error: any) {
         // ✅ CRITICAL FIX: Missing GitHub integration is NOT an auth error
         // It's a normal product state - user hasn't connected GitHub yet
@@ -127,14 +134,16 @@ export async function saveRepositories(
     fastify: FastifyInstance,
     workspaceId: string,
     repositories: RepositoryImportInput[],
-    provider: "github" | "gitlab" | "bitbucket" = "github"
+    provider: "github" | "gitlab" | "bitbucket" = "github",
+    userContext?: UserContext
 ) {
     // Use shared import logic with plan enforcement
     return await repoService.importRepositories(
         fastify,
         workspaceId,
         repositories,
-        provider
+        provider,
+        userContext
     );
 }
 

@@ -94,6 +94,8 @@ export function usePermissions() {
   const isDeveloper = userRole === 'developer';
   const isViewer = userRole === 'viewer';
   const isOwnerOrAdmin = isOwner || isAdmin;
+  const canImportRepos = isOwnerOrAdmin;
+  const canManageWorkspace = isOwnerOrAdmin;
 
   return {
     hasPermission,
@@ -104,6 +106,8 @@ export function usePermissions() {
     isDeveloper,
     isViewer,
     isOwnerOrAdmin,
+    canImportRepos,
+    canManageWorkspace,
 
     // Specific permission checks
     canInviteMembers: hasPermission('members:invite'),
@@ -111,6 +115,7 @@ export function usePermissions() {
     canUpdateRoles: hasPermission('members:update_role'),
     canCreateProjects: hasPermission('projects:create'),
     canDeleteProjects: hasPermission('projects:delete'),
+    canUpdateProject: hasPermission('projects:update'),
     canAssignProjects: hasPermission('projects:assign'),
     canCreateScans: hasPermission('scans:create'),
     canDeleteScans: hasPermission('scans:delete'),

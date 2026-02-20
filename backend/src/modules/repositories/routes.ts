@@ -37,7 +37,9 @@ export default async function repositoriesWorkspaceRoutes(fastify: FastifyInstan
      * GET /:workspaceId/repositories/github/repos
      * Fetch available GitHub repositories for import
      */
-    fastify.get("/:workspaceId/repositories/github/repos", async (req, reply) =>
+    fastify.get("/:workspaceId/repositories/github/repos", {
+        preHandler: [requireAnyRole(['owner', 'admin'])]
+    }, async (req, reply) =>
         controller.getGitHubReposController(req, reply)
     );
 
@@ -46,7 +48,7 @@ export default async function repositoriesWorkspaceRoutes(fastify: FastifyInstan
      * Import selected repositories
      */
     fastify.post("/:workspaceId/repositories/import", {
-        preHandler: [requirePermission('projects:create')]
+        preHandler: [requireAnyRole(['owner', 'admin'])]
     }, async (req, reply) =>
         controller.importRepositoriesController(req, reply)
     );
@@ -56,7 +58,7 @@ export default async function repositoriesWorkspaceRoutes(fastify: FastifyInstan
      * Re-sync repositories from GitHub
      */
     fastify.post("/:workspaceId/repositories/sync", {
-        preHandler: [requirePermission('projects:update')]
+        preHandler: [requireAnyRole(['owner', 'admin'])]
     }, async (req, reply) =>
         controller.syncRepositoriesController(req, reply)
     );

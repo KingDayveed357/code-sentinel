@@ -21,6 +21,7 @@ import {
   MoreHorizontal
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { useWorkspace } from "@/hooks/use-workspace";
 import { LogoutDialog } from "@/components/dashboard/sidebar/logout-dialog";
 import Link from "next/link";
 
@@ -30,13 +31,13 @@ interface UserNavProps {
 
 export function UserNav({ isCollapsed }: UserNavProps) {
   const { user, logout } = useAuth();
+  const { workspace, plan, role, isTeam } = useWorkspace();
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
 
   const displayName = user?.full_name || "CodeSentinel User";
   const displayEmail = user?.email || "";
   const avatarUrl = user?.user_metadata?.avatar_url || user?.avatar_url;
-  const plan = user?.plan || "Free";
-  const isPro = plan !== "Free";
+  const isPaid = plan !== "Free";
 
   return (
     <>
@@ -65,17 +66,22 @@ export function UserNav({ isCollapsed }: UserNavProps) {
                       {displayName}
                     </span>
                     <div className="flex items-center gap-2 w-full">
-                      <span className="text-xs text-muted-foreground truncate max-w-[120px]">
+                      {/* <span className="text-xs text-muted-foreground truncate max-w-[120px]">
                         {displayEmail}
-                      </span>
+                      </span> */}
                       <span className={`
                         text-[10px] px-1.5 py-0.5 rounded-full border font-bold uppercase tracking-wider
-                        ${isPro 
+                        ${isPaid 
                           ? "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800" 
                           : "bg-muted text-muted-foreground border-border"}
                       `}>
                         {plan}
                       </span>
+                      {role && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-border bg-background text-muted-foreground font-bold uppercase tracking-wider">
+                          {role}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <MoreHorizontal className="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -100,15 +106,15 @@ export function UserNav({ isCollapsed }: UserNavProps) {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             
-            {!isPro && (
+            {!isPaid && (
               <DropdownMenuItem className="p-0 focus:bg-transparent">
                 <Link 
-                  href="/dashboard/billing" 
+                  href="/dashboard/settings?tab=billing" 
                   className="flex w-full items-center gap-2 p-2 m-1 rounded-md bg-gradient-to-br from-indigo-600 to-violet-600 text-white hover:opacity-90 transition-all shadow-sm"
                 >
                   <Sparkles className="h-4 w-4 fill-white" />
                   <div className="flex flex-col">
-                    <span className="text-xs font-bold">Upgrade to Pro</span>
+                    <span className="text-xs font-bold">Upgrade Plan</span>
                     <span className="text-[10px] text-indigo-100">Get advanced security tools</span>
                   </div>
                 </Link>
@@ -116,22 +122,16 @@ export function UserNav({ isCollapsed }: UserNavProps) {
             )}
 
             <DropdownMenuGroup className="py-1">
-              {/* <DropdownMenuItem asChild>
-                <Link href="/dashboard/settings/profile" className="cursor-pointer py-2">
-                  <User className="mr-2 h-4 w-4" />
-                  <span>Profile</span>
-                </Link>
-              </DropdownMenuItem> */}
               <DropdownMenuItem asChild>
-                <Link href="/dashboard/billing" className="cursor-pointer py-2">
-                  <CreditCard className="mr-2 h-4 w-4" />
-                  <span>Billing & Usage</span>
+                <Link href="/dashboard/account" className="cursor-pointer py-2">
+                  <User className="mr-2 h-4 w-4" />
+                  <span>Account Settings</span>
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <Link href="/dashboard/settings" className="cursor-pointer py-2">
                   <Settings className="mr-2 h-4 w-4" />
-                  <span>Settings</span>
+                  <span>Workspace Settings</span>
                 </Link>
               </DropdownMenuItem>
             </DropdownMenuGroup>

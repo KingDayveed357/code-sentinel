@@ -2,16 +2,15 @@ import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { entitlementsApi, type Entitlements } from "@/lib/api/entitlements";
 import { useWorkspace } from "./use-workspace";
-import { useAuth } from "./use-auth"; // Keep imports if needed for types
 
 interface UseEntitlementsReturn {
   entitlements: Entitlements | null;
   loading: boolean;
   error: Error | null;
   refresh: () => Promise<void>;
-  isApproachingLimit: (type: 'scans' | 'repositories') => boolean;
-  isLimitExceeded: (type: 'scans' | 'repositories') => boolean;
-  getUsagePercentage: (type: 'scans' | 'repositories' | 'concurrent') => number;
+  isApproachingLimit: (type: 'scans' | 'repositories' | 'seats') => boolean;
+  isLimitExceeded: (type: 'scans' | 'repositories' | 'seats') => boolean;
+  getUsagePercentage: (type: 'scans' | 'repositories' | 'seats' | 'concurrent') => number;
   formatLimit: (value: number | null) => string;
 }
 
@@ -38,14 +37,14 @@ export function useEntitlements(): UseEntitlementsReturn {
       return entitlementsApi.getEntitlements(workspace.id);
     },
     enabled: !!workspace?.id,
-    staleTime: 1000 * 60 * 5, // 5 minutes (React Query cache, key-isolated!)
+    staleTime: 1000 * 60 * 5, // 5 minutes
   });
 
   const refresh = useCallback(async () => {
     await refetch();
   }, [refetch]);
 
-  const isApproachingLimit = useCallback((type: 'scans' | 'repositories'): boolean => {
+  const isApproachingLimit = useCallback((type: 'scans' | 'repositories' | 'seats'): boolean => {
     if (!entitlements) return false;
 
     if (type === 'scans') {
@@ -53,15 +52,20 @@ export function useEntitlements(): UseEntitlementsReturn {
         entitlements.usage.scans_this_month,
         entitlements.limits.scans_per_month
       );
-    } else {
+    } else if (type === 'repositories') {
       return entitlementsApi.isApproachingLimit(
         entitlements.usage.repositories,
         entitlements.limits.repositories
       );
+    } else {
+      return entitlementsApi.isApproachingLimit(
+        entitlements.usage.seats,
+        entitlements.limits.seats
+      );
     }
   }, [entitlements]);
 
-  const isLimitExceeded = useCallback((type: 'scans' | 'repositories'): boolean => {
+  const isLimitExceeded = useCallback((type: 'scans' | 'repositories' | 'seats'): boolean => {
     if (!entitlements) return false;
 
     if (type === 'scans') {
@@ -69,15 +73,20 @@ export function useEntitlements(): UseEntitlementsReturn {
         entitlements.usage.scans_this_month,
         entitlements.limits.scans_per_month
       );
-    } else {
+    } else if (type === 'repositories') {
       return entitlementsApi.isLimitExceeded(
         entitlements.usage.repositories,
         entitlements.limits.repositories
       );
+    } else {
+      return entitlementsApi.isLimitExceeded(
+        entitlements.usage.seats,
+        entitlements.limits.seats
+      );
     }
   }, [entitlements]);
 
-  const getUsagePercentage = useCallback((type: 'scans' | 'repositories' | 'concurrent'): number => {
+  const getUsagePercentage = useCallback((type: 'scans' | 'repositories' | 'seats' | 'concurrent'): number => {
     if (!entitlements) return 0;
 
     switch (type) {
@@ -95,6 +104,11 @@ export function useEntitlements(): UseEntitlementsReturn {
         return entitlementsApi.calculateUsagePercentage(
           entitlements.usage.concurrent_scans,
           entitlements.limits.concurrent_scans
+        );
+      case 'seats':
+        return entitlementsApi.calculateUsagePercentage(
+          entitlements.usage.seats,
+          entitlements.limits.seats
         );
       default:
         return 0;

@@ -29,7 +29,7 @@ export interface SupabaseUser {
     created_at?: string;
 }
 
-export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'viewer';
+export type WorkspaceRole = 'owner' | 'admin' | 'developer' | 'viewer';
 
 export interface WorkspaceContext {
     id: string;

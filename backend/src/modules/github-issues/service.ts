@@ -5,6 +5,7 @@
 import type { FastifyInstance } from 'fastify';
 import { getIntegration } from '../integrations/service';
 import type { GitHubIssueCreatePayload, GitHubIssueResponse, IssueCreationResult } from '../webhooks/types';
+import { canAccessProject, isProjectScopedRole } from '../authz/permissions';
 
 /**
  * Create GitHub issue for a vulnerability
@@ -433,78 +434,59 @@ export async function autoCreateIssuesForScan(
  */
 export async function closeGitHubIssue(
   fastify: FastifyInstance,
-  userId: string,
-  issueId: string
+  workspaceId: string,
+  issueId: string,
+  userContext?: { userId: string; role: string }
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // Get issue record
-    const { data: issue } = await fastify.supabase
+    const { data: issue, error: issueError } = await fastify.supabase
       .from('github_issues')
-      .select('*, repositories!inner(full_name)')
+      .select('id, repository_id, github_issue_number, repositories!inner(full_name)')
       .eq('id', issueId)
-      .eq('user_id', userId)
-      .single();
+      .eq('workspace_id', workspaceId)
+      .maybeSingle();
+
+    if (issueError) {
+      fastify.log.error({ issueError, workspaceId, issueId }, 'Failed to resolve issue');
+      return { success: false, error: 'Failed to resolve issue' };
+    }
 
     if (!issue) {
       return { success: false, error: 'Issue not found' };
     }
 
-    // Get GitHub integration - user might need to be author, so we check user integration
-    // But if team workspace, we should use workspace integration
-    // But close issue is usually manual action by user.
-    // If workspaceId is not in arguments, we might need to derive it from issue or repository?
-    // The previous implementation used getIntegration(fastify, userId).
-    // If changed to getIntegration(fastify, workspaceId), we need proper workspace context.
-    // Assuming userId here is sufficient for legacy closing or we need to update it too.
-    // For now, let's keep it as is unless it breaks.
-    // But getIntegration now expects workspaceId.
-    // So 'userId' passed here better be a workspaceId if user is team admin? No.
-    // This function 'closeGitHubIssue' is problematic if getIntegration signature changed.
-    
-    // Quick fix: pass ISSUE's workspace_id if available, or fetch it.
-    // Assuming github_issues table has workspace_id (since we added it in createGitHubIssue).
-    
-    // Fetch workspace_id from issue record?
-    // We already fetch issue record.
-    // Let's assume issue.workspace_id exists.
-    
-    // const workspaceId = issue.workspace_id;
-    // const integration = await getIntegration(fastify, workspaceId, 'github');
-    
-    // But TS might complain if I don't know the schema.
-    // Let's stick to original logic but fix the `getIntegration` call.
-    // If I can't fix `closeGitHubIssue` safely, I leave it broken? No.
-    // The `getIntegration` expects workspaceId.
-    // I should fetch workspace_id via issue.
-    // I'll add workspace_id to select.
-    
-    const { data: issueWithWorkspace } = await fastify.supabase
-      .from('github_issues')
-      .select('*, repositories!inner(full_name)')
-      .eq('id', issueId)
-      // .eq('user_id', userId) // removed user ownership check for shared workspace issues?
-      // Or keep ownership check.
-      .single();
-      
-     if (!issueWithWorkspace) return { success: false, error: 'Issue not found' };
-     
-     // Assuming workspace_id is on issue. If not, use repository.workspace_id via join?
-     // repositories!inner(full_name, workspace_id)
-     
-     const { data: repo } = await fastify.supabase.from('repositories').select('workspace_id').eq('id', issueWithWorkspace.repository_id).single();
-     if (!repo) return { success: false, error: 'Repository not found' };
-     
-     const integration = await getIntegration(fastify, repo.workspace_id, 'github');
-     
-     if (!integration || !integration.access_token) {
-        return { success: false, error: 'GitHub integration not found' };
-     }
+    if (userContext && isProjectScopedRole(userContext.role)) {
+      const allowed = await canAccessProject(
+        fastify,
+        userContext.userId,
+        issue.repository_id,
+        workspaceId,
+        userContext.role
+      );
+
+      if (!allowed) {
+        return { success: false, error: 'You do not have access to this issue' };
+      }
+    }
+
+    const integration = await getIntegration(fastify, workspaceId, 'github');
+    if (!integration || !integration.access_token) {
+      return { success: false, error: 'GitHub integration not found' };
+    }
+
+    const repository = Array.isArray(issue.repositories)
+      ? issue.repositories[0]
+      : issue.repositories;
+
+    if (!repository?.full_name) {
+      return { success: false, error: 'Repository not found' };
+    }
 
     // Close issue on GitHub
-    const [owner, repoName] = issueWithWorkspace.repositories.full_name.split('/');
+    const [owner, repoName] = repository.full_name.split('/');
 
     const response = await fetch(
-      `https://api.github.com/repos/${owner}/${repoName}/issues/${issueWithWorkspace.github_issue_number}`,
+      `https://api.github.com/repos/${owner}/${repoName}/issues/${issue.github_issue_number}`,
       {
         method: 'PATCH',
         headers: {
@@ -528,7 +510,8 @@ export async function closeGitHubIssue(
         issue_status: 'closed',
         closed_at: new Date().toISOString(),
       })
-      .eq('id', issueId);
+      .eq('id', issueId)
+      .eq('workspace_id', workspaceId);
 
     return { success: true };
   } catch (error: any) {

@@ -40,7 +40,14 @@ export async function getRepositoriesController(
     reply: FastifyReply
 ) {
     const workspaceId = request.workspace!.id;
-    const repositories = await service.fetchGitHubRepositories(request.server, workspaceId);
+    const repositories = await service.fetchGitHubRepositories(
+        request.server,
+        workspaceId,
+        {
+            userId: request.supabaseUser!.id,
+            role: request.workspaceRole!,
+        }
+    );
 
     return reply.send({ repositories });
 }
@@ -60,7 +67,11 @@ export async function saveRepositoriesController(
         request.server,
         workspaceId,
         repositories,
-        provider
+        provider,
+        {
+            userId: request.supabaseUser!.id,
+            role: request.workspaceRole!,
+        }
     );
 
     return reply.send(result);

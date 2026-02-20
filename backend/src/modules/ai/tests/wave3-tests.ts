@@ -17,6 +17,8 @@ import {
   vulnerabilityExplanationSchema,
   AiGateway,
   TaskOrchestrator,
+  TITLE_MAX_WORDS,
+  validateTitleSanity,
 } from "../application";
 import type { CacheInterface } from "../infrastructure/cache/cache-interface";
 import type { AiQueueInterface, AiQueueJob } from "../infrastructure/queue/ai-queue-interface";
@@ -551,7 +553,7 @@ test("Deterministic fallback returns valid schema when providers fail", async ()
   assert.ok(parsed.remediation_step.endsWith("."));
 });
 
-test("AI-generated titles are human-readable and under 10 words", async () => {
+test("AI-generated titles are human-readable and at most 12 words", async () => {
   const groq = new MockProvider("groq", async () => ({
     provider: "groq",
     model: "llama",
@@ -579,8 +581,9 @@ test("AI-generated titles are human-readable and under 10 words", async () => {
   const titleWords = result.payload.refined_title.split(/\s+/).filter(Boolean);
 
   assert.equal(result.provider, "groq");
-  assert.ok(titleWords.length > 0 && titleWords.length < 10);
+  assert.ok(titleWords.length >= 3 && titleWords.length <= TITLE_MAX_WORDS);
   assert.ok(/^[A-Za-z0-9]/.test(result.payload.refined_title));
+  assert.equal(validateTitleSanity(result.payload.refined_title).valid, true);
 });
 
 test("Title sanitizer removes metadata leakage and numeric suffixes", async () => {
@@ -620,7 +623,51 @@ test("Title sanitizer removes metadata leakage and numeric suffixes", async () =
   assert.equal(result.provider, "groq");
   assert.ok(!/\b\d+\b/.test(result.payload.refined_title));
   assert.ok(!/\b(admin|assets?|generic)\b/i.test(result.payload.refined_title));
-  assert.ok(result.payload.refined_title.split(/\s+/).filter(Boolean).length >= 4);
+  assert.ok(result.payload.refined_title.split(/\s+/).filter(Boolean).length >= 3);
+});
+
+test("Title sanitizer removes instruction leakage and fragmented words", async () => {
+  const groq = new MockProvider("groq", async () => ({
+    provider: "groq",
+    model: "llama",
+    rawText: JSON.stringify({
+      refined_title:
+        "Echo ing user input risks cross-site scripting you should sanitize output immediately",
+      root_cause_summary:
+        "Unsanitized output allows attacker-controlled scripts to execute in user browsers.",
+      remediation_step:
+        "Apply contextual output encoding and strict HTML sanitization for untrusted content.",
+    }),
+    latencyMs: 8,
+  }));
+  const openai = new MockProvider("openai", async () => {
+    throw new Error("should not be called");
+  });
+
+  const processor = new VulnerabilityExplanationProcessor({
+    providers: { groq, openai },
+    promptRegistry: new PromptRegistry(),
+    policyEngine: new PolicyEngine(),
+    logger: createLogger(),
+  });
+
+  const vulnerability = {
+    ...buildVulnerabilityFixture(),
+    title: "echo-ing user input risks cross-site scripting",
+    description:
+      "echo-ing user input risks cross-site scripting and enables untrusted script execution",
+  };
+
+  const result = await processor.generate(vulnerability, "v1");
+  const sanity = validateTitleSanity(result.payload.refined_title);
+
+  assert.equal(result.provider, "groq");
+  assert.equal(sanity.valid, true);
+  assert.ok(!/\bYou Should\b/i.test(result.payload.refined_title));
+  assert.ok(!/\bEcho Ing\b/.test(result.payload.refined_title));
+  assert.ok(
+    result.payload.refined_title.split(/\s+/).filter(Boolean).length <= TITLE_MAX_WORDS
+  );
 });
 
 async function run() {

@@ -14,6 +14,7 @@ import {
   vulnerabilityExplanationSchema,
   type VulnerabilityExplanationPayload,
 } from "./explanation-schema";
+import { validateTitleSanity } from "./title-sanity";
 import {
   VulnerabilityExplanationProcessor,
   type ExplanationExecutionResult,
@@ -549,6 +550,24 @@ export class AiGateway {
     vulnerabilityId: string,
     execution: ExplanationExecutionResult
   ): Promise<AiResultRow> {
+    const validatedPayload = vulnerabilityExplanationSchema.safeParse(execution.payload);
+    if (!validatedPayload.success) {
+      this.fastify.log.error(
+        { taskId: task.id, details: validatedPayload.error.flatten() },
+        "AI payload failed schema validation before persistence"
+      );
+      throw new Error("AI payload failed schema validation before persistence");
+    }
+
+    const titleSanity = validateTitleSanity(validatedPayload.data.refined_title);
+    if (!titleSanity.valid) {
+      this.fastify.log.error(
+        { taskId: task.id, titleSanity },
+        "AI title failed sanity validation before persistence"
+      );
+      throw new Error("AI title failed sanity validation before persistence");
+    }
+
     const now = new Date().toISOString();
     const { data, error } = await this.fastify.supabase
       .from("ai_results")
@@ -561,7 +580,7 @@ export class AiGateway {
           prompt_version: task.promptVersion,
           provider: execution.provider,
           model: execution.model,
-          payload: execution.payload,
+          payload: validatedPayload.data,
           prompt_tokens: execution.promptTokens ?? null,
           completion_tokens: execution.completionTokens ?? null,
           latency_ms: execution.latencyMs,
@@ -584,7 +603,7 @@ export class AiGateway {
     }
 
     const explanationForVulnerability = {
-      ...execution.payload,
+      ...validatedPayload.data,
       generated_at: now,
       provider: execution.provider,
       model_version: execution.model,
@@ -593,7 +612,7 @@ export class AiGateway {
     const vulnerabilityUpdate = await this.fastify.supabase
       .from("vulnerabilities_unified")
       .update({
-        title: execution.payload.refined_title,
+        title: validatedPayload.data.refined_title,
         ai_explanation: explanationForVulnerability,
         updated_at: now,
       })

@@ -29,6 +29,7 @@ import {
 } from "./service";
 import { getInstallationMetadata } from "./github-app/auth";
 import { env } from "../../env";
+import { canManageWorkspace } from "../authz/permissions";
 
 /**
  * GET /api/integrations
@@ -77,7 +78,23 @@ export async function connectGitHubController(
   const userId = request.profile!.id;
   const workspaceId = request.workspace!.id;
   const workspaceType = request.workspace!.type;
+  const role = request.workspaceRole;
   const { provider_token } = request.body || {};
+
+  if (!canManageWorkspace(role)) {
+    request.log.warn(
+      {
+        action: "integrations.github.connect.denied",
+        workspaceId,
+        userId,
+        role,
+      },
+      "Unauthorized GitHub integration management attempt"
+    );
+    throw fastify.httpErrors.forbidden(
+      "GitHub repository imports are managed by workspace admins."
+    );
+  }
 
   fastify.log.info({ workspaceId, workspaceType }, 'Connecting GitHub integration');
 
@@ -165,7 +182,24 @@ export async function disconnectIntegrationController(
 ) {
   const workspaceId = request.workspace!.id;
   const workspaceType = request.workspace!.type;
+  const role = request.workspaceRole;
   const { provider } = request.params;
+
+  if (!canManageWorkspace(role)) {
+    request.log.warn(
+      {
+        action: "integrations.disconnect.denied",
+        workspaceId,
+        userId: request.profile?.id,
+        role,
+        provider,
+      },
+      "Unauthorized integration disconnect attempt"
+    );
+    throw fastify.httpErrors.forbidden(
+      "GitHub repository imports are managed by workspace admins."
+    );
+  }
 
   // Validate provider
   const validProviders: IntegrationProvider[] = ['github', 'gitlab', 'bitbucket', 'slack'];

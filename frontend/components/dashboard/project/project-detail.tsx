@@ -37,7 +37,7 @@ import type { Vulnerability } from "@/lib/api/vulnerabilities";
 import { RunScanModal } from "@/components/scans/run-scan-modal";
 import { toast } from "sonner";
 import { usePermissions } from "@/hooks/use-permissions";
-import { ProjectAccessModal } from "./project-access-modal";
+
 import { Users } from "lucide-react";
 
 
@@ -112,7 +112,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const vulnsError = (vulnsErrorObj as Error)?.message || null;
 
   const [scanModalOpen, setScanModalOpen] = useState(false);
-  const [accessModalOpen, setAccessModalOpen] = useState(false);
+
 
   const handleRunScan = () => {
     setScanModalOpen(true);
@@ -272,12 +272,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             </Button>
           )}
 
-          {canAssignProjects && (
-            <Button variant="outline" onClick={() => setAccessModalOpen(true)}>
-              <Users className="mr-2 h-4 w-4" />
-              Manage Access
-            </Button>
-          )}
+
           
           {canCreateScans && (
             <Button 
@@ -689,13 +684,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             onScanStarted={handleScanStarted}
           />
           
-          <ProjectAccessModal
-            open={accessModalOpen}
-            onOpenChange={setAccessModalOpen}
-            workspaceId={workspace.id}
-            projectId={project.id}
-            projectName={project.name}
-          />
+
         </>
       )}
     </div>

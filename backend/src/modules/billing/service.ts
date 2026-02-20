@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { PaymentProvider, CheckoutSession } from './types';
+import { PaymentProvider, CheckoutSession, Invoice, SubscriptionDetails } from './types';
 import { DevPaymentProvider } from './providers/dev.provider';
 // import { env } from '../../env'; // Env is accessed via process.env directly in constructor for now or import if exists
 
@@ -68,5 +68,19 @@ export class BillingService {
     }
     
     this.fastify.log.info({ workspaceId, subscriptionId }, 'Workspace subscription activated');
+  }
+
+  /**
+   * Get subscription details for a workspace
+   */
+  async getSubscriptionDetails(workspaceId: string): Promise<SubscriptionDetails | null> {
+    return this.provider.getSubscriptionDetails(workspaceId);
+  }
+
+  /**
+   * Get invoices for a workspace
+   */
+  async getInvoices(workspaceId: string): Promise<Invoice[]> {
+    return this.provider.getInvoices(workspaceId);
   }
 }

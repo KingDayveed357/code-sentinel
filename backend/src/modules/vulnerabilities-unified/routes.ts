@@ -49,7 +49,8 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
       const result = await getVulnerabilitiesByWorkspace(
         fastify,
         workspaceId,
-        filters
+        filters,
+        { userId: request.supabaseUser!.id, role: request.workspaceRole! }
       );
 
       return reply.send(result);
@@ -176,7 +177,8 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
         fastify,
         workspaceId,
         vulnId,
-        regenerate || false
+        regenerate || false,
+        { userId: request.supabaseUser!.id, role: request.workspaceRole! }
       );
 
       return reply.send(updated);
@@ -204,7 +206,8 @@ export async function vulnerabilitiesUnifiedRoutes(fastify: FastifyInstance) {
         fastify,
         workspaceId,
         vulnId,
-        user?.id || null
+        user?.id || null,
+        { userId: request.supabaseUser!.id, role: request.workspaceRole! }
       );
 
       return reply.send(result);

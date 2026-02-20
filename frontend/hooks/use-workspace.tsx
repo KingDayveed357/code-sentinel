@@ -56,12 +56,15 @@ export function useWorkspace() {
         predicate: (query) => {
           const key = query.queryKey;
           // Invalidate queries that include 'workspace' or the old workspace ID
+          // ✅ FIX: Also invalidate scan-related queries to prevent stale data leakage
           return (
             key.includes('workspace') || 
             key.includes(workspace?.id || '') ||
             key.includes('dashboard') ||
             key.includes('projects') ||
-            key.includes('integrations')
+            key.includes('integrations') ||
+            key.includes('active-scans') ||
+            key.includes('scans')
           );
         },
       });
@@ -106,9 +109,30 @@ export function useWorkspace() {
     isSwitching: loading, // Alias for workspace switching state
     isTeamWorkspace: workspace?.type === 'team',
     isPersonalWorkspace: workspace?.type === 'personal',
+    
+    // Plan info
+    plan: workspace?.plan || 'Free',
+    billingStatus: workspace?.billing_status || 'none',
+    isFree: workspace?.plan === 'Free',
+    isDev: workspace?.plan === 'Dev',
+    isTeam: workspace?.plan === 'Team' || workspace?.plan === 'Enterprise',
+    isBillingActive: workspace?.billing_status === 'active' || (workspace?.type === 'personal' && workspace?.plan === 'Free'),
+    
     error: null,
     switchWorkspace,
     setActiveWorkspace: switchWorkspace, // Alias
+    updateWorkspace: async (workspaceId: string, data: workspaceApi.UpdateWorkspaceData) => {
+      const updated = await workspaceApi.updateWorkspace(workspaceId, data);
+      // Update Zustand store so UI reflects the change immediately
+      if (workspace?.id === workspaceId) {
+        setWorkspace({ ...workspace, ...updated });
+      }
+      // Invalidate workspace queries to keep caches in sync
+      await queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey.includes('workspace'),
+      });
+      return updated;
+    },
     refreshWorkspace: async () => {
       if (workspace?.id) {
         const updated = await workspaceApi.getWorkspace(workspace.id);

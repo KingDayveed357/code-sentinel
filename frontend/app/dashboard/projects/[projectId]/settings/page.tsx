@@ -33,7 +33,22 @@ import {
   UserPlus,
   Shield,
   Search,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { toast } from "sonner";
 import { DisconnectProjectDialog } from "@/components/dashboard/project/disconnect-project-dialog";
 import { repositoriesApi } from "@/lib/api/repositories";
@@ -97,19 +112,27 @@ export default function ProjectSettingsPage({
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [assigningMember, setAssigningMember] = useState<string | null>(null);
   const [removingMember, setRemovingMember] = useState<string | null>(null);
-  const [memberSearchQuery, setMemberSearchQuery] = useState("");
 
-  const normalizedSearchQuery = memberSearchQuery.trim().toLowerCase();
   const assignedUserIds = new Set(assignedMembers.map((member) => member.user_id));
-  const assignableMembers = availableWorkspaceMembers.filter((member) => {
-    if (assignedUserIds.has(member.user_id)) return false;
 
-    if (!normalizedSearchQuery) return true;
+  const [openCombobox, setOpenCombobox] = useState(false);
 
-    const memberName = (member.full_name || "").toLowerCase();
-    const memberEmail = (member.email || "").toLowerCase();
-    return memberName.includes(normalizedSearchQuery) || memberEmail.includes(normalizedSearchQuery);
-  });
+  const getRoleBadge = (role: string) => {
+    switch (role?.toLowerCase()) {
+      case "owner":
+        return <Badge variant="default" className="bg-primary/10 text-primary hover:bg-primary/20 border-primary/20">Owner</Badge>;
+      case "admin":
+        return <Badge variant="secondary" className="bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">Admin</Badge>;
+      case "developer":
+        return <Badge variant="outline" className="border-blue-200 text-blue-700 dark:border-blue-800 dark:text-blue-400">Developer</Badge>;
+      case "viewer":
+        return <Badge variant="outline" className="text-muted-foreground">Viewer</Badge>;
+      default:
+        return <Badge variant="outline">{role}</Badge>;
+    }
+  };
+
+
 
   useEffect(() => {
     if (workspace?.id) {
@@ -596,14 +619,14 @@ export default function ProjectSettingsPage({
               </div>
             </div>
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={loadProject}
-                disabled={loading}
-              >
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadProject}
+                  disabled={loading}
+                >
+                  <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                </Button>
               {webhookStatus !== "active" && (
                 <Button onClick={handleRegisterWebhook} disabled={registeringWebhook}>
                   {registeringWebhook ? (
@@ -873,52 +896,59 @@ export default function ProjectSettingsPage({
           <CardContent className="space-y-6">
             {/* Assign Member Input */}
             <div className="space-y-4">
-              <Label>Assign New Member</Label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    placeholder="Search workspace members by name or email..." 
-                    className="pl-9"
-                    value={memberSearchQuery}
-                    onChange={(e) => setMemberSearchQuery(e.target.value)}
-                  />
-                  
-                  {memberSearchQuery && (
-                    <Card className="absolute top-full left-0 right-0 mt-1 z-10 shadow-lg max-h-[300px] overflow-y-auto">
-                      <CardContent className="p-0">
-                        {assignableMembers.map((member) => (
-                            <button
-                              key={member.user_id}
-                              className="w-full flex items-center gap-3 p-3 hover:bg-muted transition-colors text-left"
-                              onClick={() => {
-                                handleAssignMember(member.user_id);
-                                setMemberSearchQuery("");
-                              }}
-                              disabled={assigningMember === member.user_id}
-                            >
-                              <Avatar className="h-8 w-8">
-                                <AvatarImage src={member.avatar_url || ""} />
-                                <AvatarFallback>{member.full_name?.charAt(0) || member.email?.charAt(0) || "U"}</AvatarFallback>
-                              </Avatar>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate">{member.full_name || member.email}</p>
-                                <p className="text-xs text-muted-foreground truncate">{member.email}</p>
-                              </div>
-                              {assigningMember === member.user_id ? (
-                                <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
-                              ) : (
-                                <UserPlus className="h-4 w-4 text-muted-foreground" />
-                              )}
-                            </button>
-                        ))}
-                        {assignableMembers.length === 0 && (
-                          <p className="p-4 text-sm text-muted-foreground text-center">No matching members found</p>
-                        )}
-                      </CardContent>
-                    </Card>
-                  )}
-                </div>
+              <div className="flex flex-col space-y-2">
+                <Label>Assign New Member</Label>
+                <Popover open={openCombobox} onOpenChange={setOpenCombobox}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={openCombobox}
+                      className="w-full justify-between"
+                    >
+                      <span className="text-muted-foreground">Select member to assign...</span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[400px] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search workspace members..." />
+                      <CommandList>
+                        <CommandEmpty>No member found.</CommandEmpty>
+                        <CommandGroup heading="Available Members">
+                          {availableWorkspaceMembers
+                            .filter(m => !assignedUserIds.has(m.user_id))
+                            .map((member) => (
+                              <CommandItem
+                                key={member.user_id}
+                                value={member.user_id}
+                                onSelect={() => {
+                                  handleAssignMember(member.user_id);
+                                  setOpenCombobox(false);
+                                }}
+                                className="flex items-center gap-2 cursor-pointer"
+                              >
+                                <Avatar className="h-6 w-6">
+                                  <AvatarImage src={member.avatar_url} />
+                                  <AvatarFallback>{member.full_name?.charAt(0) || "?"}</AvatarFallback>
+                                </Avatar>
+                                <div className="flex flex-col">
+                                  <span>{member.full_name || "Unknown"}</span>
+                                  <span className="text-xs text-muted-foreground">{member.email}</span>
+                                </div>
+                                <div className="ml-auto">
+                                  {getRoleBadge(member.role)}
+                                </div>
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <p className="text-sm text-muted-foreground">
+                  Viewers and Developers must be assigned to projects to access them.
+                </p>
               </div>
             </div>
 
@@ -936,28 +966,36 @@ export default function ProjectSettingsPage({
                   </div>
                 ) : (
                   assignedMembers.map((assignment) => (
-                    <div key={assignment.id} className="flex items-center justify-between p-4">
+                    <div key={assignment.id} className="flex items-center justify-between p-4 group hover:bg-muted/30 transition-colors">
                       <div className="flex items-center gap-3">
                          <Avatar className="h-10 w-10">
                            <AvatarImage src={assignment.user?.avatar_url} />
                            <AvatarFallback>{assignment.user?.full_name?.charAt(0) || "?"}</AvatarFallback>
                          </Avatar>
                          <div>
-                           <p className="font-semibold">{assignment.user?.full_name || assignment.user?.email}</p>
+                           <div className="flex items-center gap-2">
+                             <p className="font-semibold">{assignment.user?.full_name || assignment.user?.email}</p>
+                             {availableWorkspaceMembers.find(m => m.user_id === assignment.user_id) && 
+                               getRoleBadge(availableWorkspaceMembers.find(m => m.user_id === assignment.user_id).role)
+                             }
+                           </div>
                            <p className="text-sm text-muted-foreground">{assignment.user?.email}</p>
                          </div>
                       </div>
                       <Button 
                         variant="ghost" 
                         size="sm" 
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        className="opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive hover:bg-destructive/10 transition-all"
                         onClick={() => handleRemoveMember(assignment.user_id)}
                         disabled={removingMember === assignment.user_id}
                       >
                         {removingMember === assignment.user_id ? (
                            <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                           "Remove"
+                           <>
+                             <Trash2 className="h-4 w-4 mr-1" />
+                             Remove
+                           </>
                         )}
                       </Button>
                     </div>

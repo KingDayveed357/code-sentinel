@@ -5,18 +5,21 @@ export interface PlanLimits {
   repositories: number | null;
   scans_per_month: number | null;
   concurrent_scans: number;
+  seats: number | null;
 }
 
 export interface PlanUsage {
   repositories: number;
   scans_this_month: number;
   concurrent_scans: number;
+  seats: number;
 }
 
 export interface PlanRemaining {
   repositories: number | null;
   scans_this_month: number | null;
   concurrent_scans: number;
+  seats: number | null;
 }
 
 export interface UsagePeriod {
